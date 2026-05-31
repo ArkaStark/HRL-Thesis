@@ -138,70 +138,74 @@ def main():
     critic_lr = 0.005 # critic learns faster than actor to provide better value estimates for policy updates
     actor_lr = 0.001
 
-    # Initialise the environment
-    env = gym.make("Humanoid-v5")
+    train = False
+    if train:
+        # Initialise the environment
+        env = gym.make("Humanoid-v5")
 
-    # Get dimensions of observation and action spaces
-    obs_space_dims = env.observation_space.shape[0]
-    action_space_dims = env.action_space.shape[0]
+        # Get dimensions of observation and action spaces
+        obs_space_dims = env.observation_space.shape[0]
+        action_space_dims = env.action_space.shape[0]
 
-    print(f"Observation space dimensions: {obs_space_dims}")
-    print(f"Action space dimensions: {action_space_dims}")
+        print(f"Observation space dimensions: {obs_space_dims}")
+        print(f"Action space dimensions: {action_space_dims}")
 
-    # Initialize the Actor-Critic agent
-    device = "cpu"
-    agent = Actor_Critic(
-        n_features=obs_space_dims,
-        n_actions=action_space_dims,
-        device=device,
-        critic_lr=critic_lr,
-        actor_lr=actor_lr,
-    )
+        # Initialize the Actor-Critic agent
+        device = "cpu"
+        agent = Actor_Critic(
+            n_features=obs_space_dims,
+            n_actions=action_space_dims,
+            device=device,
+            critic_lr=critic_lr,
+            actor_lr=actor_lr,
+        )
 
-    for episode in tqdm(range(num_episodes)):
-        obs, info = env.reset(seed=random.randint(0, 1000))
-        done = False
+        for episode in tqdm(range(num_episodes)):
+            obs, info = env.reset(seed=random.randint(0, 1000))
+            done = False
 
-        # Initialize lists to store rewards, values, and action log probabilities for the episode
-        rewards = []
-        values = []
-        action_log_probs = []
+            # Initialize lists to store rewards, values, and action log probabilities for the episode
+            rewards = []
+            values = []
+            action_log_probs = []
 
-        while not done:
-            action, action_log_prob, value = agent.select_action(obs)
-            print(f"Selected action: {action.cpu().numpy()} with log probability {action_log_prob.item()} and value estimate {value.item()}")
-            obs, reward, terminated, truncated, info = env.step(action.cpu().numpy())
-            done = terminated or truncated
+            while not done:
+                # action, value = agent.select_action(obs)
+                action = env.action_space.sample() # random action for testing
+                # print(f"Selected action: {action.cpu().numpy()} with log probability {action_log_prob.item()} and value estimate {value.item()}")
+                obs, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
 
-            rewards.append(reward)
-            values.append(value)
-            action_log_probs.append(action_log_prob)
+                rewards.append(reward)
+                # values.append(value)
+                # action_log_probs.append(action_log_prob)
 
-        # Convert lists to tensors
-        rewards = torch.tensor(rewards).to(agent.device)
-        values = torch.cat(values).to(agent.device)
-        action_log_probs = torch.cat(action_log_probs).to(agent.device)
+            # Convert lists to tensors
+            rewards = torch.tensor(rewards).to(agent.device)
+            values = torch.cat(values).to(agent.device)
+            action_log_probs = torch.cat(action_log_probs).to(agent.device)
 
-        # Compute losses and update networks
-        actor_loss, critic_loss = agent.get_losses(rewards, values, action_log_probs, gamma)
-        agent.update(actor_loss, critic_loss)
+            # Compute losses and update networks
+            actor_loss, critic_loss = agent.get_losses(rewards, values, action_log_probs, gamma)
+            agent.update(actor_loss, critic_loss)
 
-    env.close()
+        env.close()
 
-    # Plotting rewards over episodes
-    plt.plot(rewards)
-    plt.xlabel("Episode")
-    plt.ylabel("Reward")
-    plt.title("Actor-Critic on Humanoid-v5")
-    plt.show()
+        # Plotting rewards over episodes
+        plt.plot(rewards)
+        plt.xlabel("Episode")
+        plt.ylabel("Reward")
+        plt.title("Actor-Critic on Humanoid-v5")
+        plt.show()
 
     test_env = gym.make("Humanoid-v5", render_mode="human")
     obs, info = test_env.reset(seed=42)
     done = False
     while not done:
-        action, _, _ = agent.select_action(obs)
-        obs, reward, terminated, truncated, info = test_env.step(action.cpu().numpy())
-        done = terminated or truncated
+        # action, _, _ = agent.select_action(obs)
+        action = test_env.action_space.sample() # random action for testing
+        obs, reward, terminated, truncated, info = test_env.step(action)
+        done = truncated
     test_env.close()
 
 

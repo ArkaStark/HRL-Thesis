@@ -10,9 +10,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
 from torch.distributions.normal import Normal
+
+import wandb
     
 class PPO(nn.Module):
-    """Actor-Critic algorithm."""
+    """Proximal Policy Optimization with Advantage Actor-Critic algorithm."""
 
     def __init__(
         self,
@@ -67,15 +69,16 @@ class PPO(nn.Module):
             lr=actor_lr,
         )
 
-    def forward(self, x: np.ndarray) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: np.ndarray) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Returns the value estimate and action logits for a given observation.
 
         Args:
             x: Observation from the environment
 
         Returns:
-            value: Value estimate for the observation
-            logits: Action logits for the observation
+            values: Value estimate for the observation
+            action_means: Means of the action distribution
+            action_stds: Standard deviations of the action distribution
         """
         x = torch.as_tensor(x, dtype=torch.float32).to(self.device)
 
@@ -227,7 +230,8 @@ def main():
     train_agent = False
     save_weights = True
     load_weights = True
-    model_path = "bipedalwalker_weights/bipedal_PPO_10env_10000_steps_best"
+    model_path = "Weights/bipedalwalker_weights/bipedal_PPO_10env_10000_steps_best"
+    wandb_upload = True
 
     # Initialise the environment
     envs = gym.make_vec("BipedalWalker-v3", hardcore=False, num_envs=n_envs, max_episode_steps=1600)
@@ -264,6 +268,27 @@ def main():
 
     #train_agent = False --- IGNORE ---
     if train_agent:
+        if wandb_upload:
+            # Start a new wandb run to track this script.
+            run = wandb.init(
+                # Set the wandb entity where your project will be logged (generally your team name).
+                entity="arkapatra31-ust",
+                # Set the wandb project where this run will be logged.
+                project="PPO",
+                # Track hyperparameters and run metadata.
+                config={
+                    "env": "BipedalWalkerHardcore-v3",
+                    "n_envs": n_envs,
+                    "n_updates": n_updates,
+                    "n_steps_per_update": n_steps_per_update,
+                    "ppo_epochs": ppo_epochs,
+                    "gamma": gamma,
+                    "ent_coef": ent_coef,
+                    "critic_lr": critic_lr,
+                    "actor_lr": actor_lr,
+                    "lam": lam,
+                },
+            )
 
         # create a wrapper environment to save episode returns and episode lengths
         envs_wrapper = gym.wrappers.vector.RecordEpisodeStatistics(
@@ -345,6 +370,17 @@ def main():
                 actor_losses.append(actor_loss.item())
                 critic_losses.append(critic_loss.item())
                 entropies.append(entropy.mean().item())
+
+                if wandb_upload:
+                    wandb.log({
+                        "actor_loss": actor_loss.item(),
+                        "critic_loss": critic_loss.item(),
+                        "entropy": entropy.mean().item(),
+                        "average_episode_return": np.mean(envs_wrapper.return_queue),
+                    })
+
+        if wandb_upload:
+            run.finish()
 
         if not os.path.exists(model_path):
             os.makedirs(model_path)
@@ -440,7 +476,7 @@ def main():
 
     # Test the trained agent
 
-    for i in range(5):
+    for i in range(3):
         test_env = gym.make("BipedalWalker-v3", hardcore=False, render_mode="human", max_episode_steps=1600)
         obs, info = test_env.reset(seed=i)
         done = False

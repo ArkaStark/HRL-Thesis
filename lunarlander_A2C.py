@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from torch import optim
 from tqdm import tqdm
+import wandb
 
 import gymnasium as gym
 
@@ -181,8 +182,8 @@ class A2C(nn.Module):
 def main():
 
     # environment hyperparams
-    n_envs = 10
-    n_updates = 1000
+    n_envs = 1
+    n_updates = 10000
     n_steps_per_update = 128
     randomize_domain = False
 
@@ -226,7 +227,7 @@ def main():
     action_shape = envs.single_action_space.n
 
     # set the device
-    use_cuda = False
+    use_cuda = True
     if use_cuda:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
@@ -236,9 +237,30 @@ def main():
     agent = A2C(obs_shape, action_shape, device, critic_lr, actor_lr, n_envs)
 
     # TRAINING LOOP
-    train_agent = True
+    train_agent = False
+    wandb_upload = True
 
     if train_agent:
+        if wandb_upload:
+            # Start a new wandb run to track this script.
+            run = wandb.init(
+                # Set the wandb entity where your project will be logged (generally your team name).
+                entity="arkapatra31-ust",
+                # Set the wandb project where this run will be logged.
+                project="GridWorld",
+                # Track hyperparameters and run metadata.
+                config={
+                    "env": "GridWorld-v0",
+                    "n_envs": n_envs,
+                    "n_updates": n_updates,
+                    "n_steps_per_update": n_steps_per_update,
+                    "gamma": gamma,
+                    "lam": lam,
+                    "ent_coef": ent_coef,
+                    "actor_lr": actor_lr,
+                    "critic_lr": critic_lr,
+                },
+            )
 
         # create a wrapper environment to save episode returns and episode lengths
         # create a wrapper environment to save episode returns and episode lengths
@@ -303,10 +325,24 @@ def main():
             # update the actor and critic networks
             agent.update_parameters(critic_loss, actor_loss)
 
+            if wandb_upload:
+                # Log the losses and entropy to wandb
+                wandb.log(
+                    {
+                        "critic_loss": critic_loss.detach().cpu().numpy(),
+                        "actor_loss": actor_loss.detach().cpu().numpy(),
+                        "entropy": ep_entropies.detach().mean().cpu().numpy(),
+                        "episode_return": envs_wrapper.return_queue[-1],
+                    }
+                )
+
             # log the losses and entropy
             critic_losses.append(critic_loss.detach().cpu().numpy())
             actor_losses.append(actor_loss.detach().cpu().numpy())
             entropies.append(ep_entropies.detach().mean().cpu().numpy())
+
+        if wandb_upload:
+            run.finish()
 
         # PLOTTING
         # %matplotlib inline
@@ -370,14 +406,14 @@ def main():
         plt.show()
 
     # SAVE THE MODEL
-    save_weights = False
+    save_weights = True
     load_weights = True
 
-    actor_weights_path = "lunarlander_A2C_weights/actor_weights.h5"
-    critic_weights_path = "lunarlander_A2C_weights/critic_weights.h5"
+    actor_weights_path = "Weights/lunarlander_A2C_weights/actor_weights_10k.h5"
+    critic_weights_path = "Weights/lunarlander_A2C_weights/critic_weights_10k.h5"
 
-    if not os.path.exists("lunarlander_A2C_weights"):
-        os.mkdir("lunarlander_A2C_weights")
+    if not os.path.exists("Weights/lunarlander_A2C_weights"):
+        os.mkdir("Weights/lunarlander_A2C_weights")
 
     """ save network weights """
     if train_agent and save_weights:
