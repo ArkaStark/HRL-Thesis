@@ -74,6 +74,7 @@ class feudal_DQN(nn.Module):
         # initialize the worker and manager DQNs
         self.lower = lower_DQN(obs_dim, action_dim, device).to(device)
         self.higher = higher_DQN(obs_dim, goal_dim, device).to(device)
+        self.goal_loss_cosine = nn.CosineEmbeddingLoss()
 
         self.lower_optimizer = optim.Adam(self.lower.parameters(), lr=self.alpha)
         self.higher_optimizer = optim.Adam(self.higher.parameters(), lr=self.beta)
@@ -102,6 +103,7 @@ class feudal_DQN(nn.Module):
 
         r_l = torch.zeros(self.T, device=self.device)
         r_h = torch.zeros(len(rewards) // self.T, device=self.device)
+        dir_cos = torch.zeros(len(rewards) // self.T, device=self.device)
 
         loss_l = 0
         loss_h = 0
@@ -110,9 +112,15 @@ class feudal_DQN(nn.Module):
 
         N = rewards.shape[0] - 1
 
-        for t in reversed(range( N // self.T )):
-            for k in reversed(range(self.T)):
-                r_l[k] = rewards[t*self.T + k] # free design reward - lower level
+        for t in range( N // self.T ):
+
+            theta = (goals[t] * 3.142 / self.goal_dim).detach().clone().requires_grad_(True)
+            goal_dir = torch.stack([torch.cos(theta), torch.sin(theta)])
+
+            for k in range(self.T):
+                state_dir_l = states[t*self.T + k + 1, :2] - states[t*self.T + k, :2]
+                dir_cos_l = self.goal_loss_cosine(state_dir_l.unsqueeze(0), goal_dir.unsqueeze(0), torch.tensor([-1.0], device=self.device))
+                r_l[k] = rewards[t*self.T + k] + dir_cos_l # free design reward - lower level
                 r_h[t] = r_h[t] + rewards[t*self.T + k] * (gamma_h ** k) # discounted sum of rewards (higher lvl)
 
                 # calculate the target Q-values for the lower DQN
@@ -120,7 +128,7 @@ class feudal_DQN(nn.Module):
                 error_l = target_l - Q_ls[t*self.T + k][actions[t*self.T + k]]
                 loss_l += 0.5 * error_l.pow(2)
 
-                policy_loss += -log_probs[t*self.T + k] * error_l.detach() - ent_coef * entropies[t*self.T + k]
+                policy_loss += -log_probs[t*self.T + k] * error_l.detach() - ent_coef * entropies[t*self.T + k].detach()
 
             # calculate the target Q-values for the higher DQN
             target_h = r_h[t] + (gamma_h ** self.T) * Q_hs[t+1].max() * (1 - dones[(t+1)*self.T])
@@ -131,19 +139,17 @@ class feudal_DQN(nn.Module):
             state_dir = states[(t+1)*self.T, :2] - states[t*self.T, :2] 
             # the goal loss encourages the manager to select goals that point in the direction of the state change that occurs over the next T steps
             # it goes to 1 when goals aligns
-            theta = (goals[t] * 3.142 / self.goal_dim).detach().clone().requires_grad_(True)
-            goal_dir = torch.stack([torch.cos(theta), torch.sin(theta)])
-            dir_cos = F.cosine_similarity(state_dir.unsqueeze(0), goal_dir.unsqueeze(0))
+            dir_cos[t] = self.goal_loss_cosine(state_dir.unsqueeze(0), goal_dir.unsqueeze(0), torch.tensor([-1.0], device=self.device))
             # when goals aligns with state change, error_h has higher effect on goal_loss
-            goal_loss += -dir_cos * error_h.detach() 
+            goal_loss += -dir_cos[t] * error_h.detach() 
 
-        return loss_l, loss_h, policy_loss, goal_loss
+        return loss_l, loss_h, policy_loss, goal_loss, dir_cos[t]
     
     def update(self, loss_l, loss_h, policy_loss, goal_loss):
 
         self.lower_optimizer.zero_grad()
         lower_loss = loss_l #+ policy_loss
-        lower_loss.backward()
+        lower_loss.backward(retain_graph=True)
         torch.nn.utils.clip_grad_norm_(self.lower.parameters(), max_norm=0.5)
         self.lower_optimizer.step()
 
@@ -174,7 +180,7 @@ def main():
     save_weights = True
     load_weights = False
     wandb_upload = True
-    use_cuda = False
+    use_cuda = True
 
     model_dir = f"Weights/lunarlander_FeudalDQN_weights/1k_updates_T_{T}_goalDim_{goal_dim}_lowerLR_{lower_lr}_higherLR_{higher_lr}"
 
@@ -247,10 +253,10 @@ def main():
                 },
             )
 
-        loss_l_list = []
-        loss_h_list = []
-        policy_loss_list = []
-        goal_loss_list = []
+        # loss_l_list = []
+        # loss_h_list = []
+        # policy_loss_list = []
+        # goal_loss_list = []
 
         ep_rewards = [0]
         ep_lengths = [0]
@@ -270,8 +276,8 @@ def main():
             Q_hs = torch.zeros((n_steps_per_update // T, goal_dim), device=device)
             Q_ls = torch.zeros((n_steps_per_update, action_shape), device=device)
 
-            rewards = np.zeros((n_steps_per_update))
-            dones = np.zeros((n_steps_per_update))
+            rewards = torch.zeros((n_steps_per_update), device=device)
+            dones = torch.zeros((n_steps_per_update), device=device)
 
             while step < n_steps_per_update:
                 # select goals and actions for each environment
@@ -292,7 +298,7 @@ def main():
                     actions[step] = action
                     log_probs[step] = log_prob
                     entropies[step] = entropy
-                    rewards[step] = reward/200 # normalize rewards
+                    rewards[step] = reward/200
                     dones[step] = done
                     Q_ls[step, :] = Q_l
 
@@ -313,7 +319,7 @@ def main():
 
 
             # store the transitions and other relevant information for training
-            loss_l, loss_h, policy_loss, goal_loss = agent.get_losses(
+            loss_l, loss_h, policy_loss, goal_loss, dir_cos = agent.get_losses(
                 states,
                 actions,
                 log_probs,
@@ -327,10 +333,10 @@ def main():
                 gamma_l=gamma_l,
             )
 
-            loss_l_list.append(loss_l)
-            loss_h_list.append(loss_h)
-            policy_loss_list.append(policy_loss)
-            goal_loss_list.append(goal_loss)
+            # loss_l_list.append(loss_l)
+            # loss_h_list.append(loss_h)
+            # policy_loss_list.append(policy_loss)
+            # goal_loss_list.append(goal_loss)
 
             agent.update(loss_l, loss_h, policy_loss, goal_loss)
 
@@ -344,6 +350,8 @@ def main():
                         "goal_loss": goal_loss,
                         "episode_rewards": ep_rewards[-1],
                         "episode_lengths": ep_lengths[-1],
+                        "entropy": entropies.mean().item(),
+                        "dir_cos": dir_cos.mean().item(),
                     }
                 )
 
