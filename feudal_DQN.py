@@ -72,24 +72,26 @@ class feudal_DQN(nn.Module):
         self.gl_wt = gl_wt # weight for the goal learning loss
         self.action_eps = action_eps # epsilon for action selection
         # initialize the worker and manager DQNs
-        self.lower = lower_DQN(obs_dim, action_dim, goal_dim, device).to(device)
-        self.higher = higher_DQN(obs_dim, goal_dim, device).to(device)
+        self.lower_A = lower_DQN(obs_dim, action_dim, goal_dim, device).to(device)
+        self.lower_B = lower_DQN(obs_dim, action_dim, goal_dim, device).to(device)
+        self.higher_A = higher_DQN(obs_dim, goal_dim, device).to(device)
+        self.higher_B = higher_DQN(obs_dim, goal_dim, device).to(device)
         self.goal_loss_cosine = nn.CosineEmbeddingLoss()
 
-        self.lower_optimizer = optim.Adam(self.lower.parameters(), lr=self.alpha)
-        self.higher_optimizer = optim.Adam(self.higher.parameters(), lr=self.beta)
+        self.lower_optimizer = optim.Adam(list(self.lower_A.parameters()) + list(self.lower_B.parameters()), lr=self.alpha)
+        self.higher_optimizer = optim.Adam(list(self.higher_A.parameters()) + list(self.higher_B.parameters()), lr=self.beta)
 
 
     def select_goal(self, state):
         s = torch.as_tensor(state, dtype=torch.float32).to(self.device)
-        Q_h = self.higher(s)
+        Q_h = self.higher_A(s)
         goal = torch.argmax(Q_h)
         return goal, Q_h
     
     def select_action(self, state, goal):
         s = torch.as_tensor(state, dtype=torch.float32).to(self.device)
 
-        Q_l = self.lower(s, goal)
+        Q_l = self.lower_A(s, goal)
 
         # choose action based on epsilon-greedy policy
         if np.random.rand() < self.action_eps:
@@ -125,18 +127,31 @@ class feudal_DQN(nn.Module):
             for k in range(self.T):
                 state_dir_l = states[t*self.T + k + 1, :2] - states[t*self.T + k, :2]
                 dir_cos_l = self.goal_loss_cosine(state_dir_l.unsqueeze(0), goal_dir.unsqueeze(0), torch.tensor([-1.0], device=self.device))
-                r_l[k] = self.rl_wt * rewards[t*self.T + k] + dir_cos_l # free design reward - lower level
+                r_l[k] = self.rl_wt * rewards[t*self.T + k] + dir_cos_l.detach() # free design reward - lower level
                 r_h[t] = r_h[t] + rewards[t*self.T + k] * (gamma_h ** k) # discounted sum of rewards (higher lvl)
 
                 # calculate the target Q-values for the lower DQN
-                target_l = r_l[k] + gamma_l * Q_ls[t*self.T + k + 1].max().detach() * (1 - dones[t*self.T + k + 1]) # detach Q_max?
+                # double DQN style target calculation to mitigate overestimation bias
+                if np.random.rand() < 0.5:
+                    a_star = self.lower_A(states[t*self.T + k + 1], goals[t]).argmax()
+                    Q_l_target = self.lower_B(states[t*self.T + k + 1], goals[t])[a_star].detach() # detach?
+                else:                    
+                    a_star = self.lower_B(states[t*self.T + k + 1], goals[t]).argmax()
+                    Q_l_target = self.lower_A(states[t*self.T + k + 1], goals[t])[a_star].detach()
+                target_l = r_l[k] + gamma_l * Q_l_target * (1 - dones[t*self.T + k + 1])
                 error_l = target_l - Q_ls[t*self.T + k][actions[t*self.T + k]]
                 loss_l += 0.5 * error_l.pow(2)
 
                 # policy_loss += -log_probs[t*self.T + k] * error_l.detach() - ent_coef * entropies[t*self.T + k].detach() # remove policy
 
             # calculate the target Q-values for the higher DQN
-            target_h = r_h[t] + (gamma_h ** self.T) * Q_hs[t+1].max().detach() * (1 - dones[(t+1)*self.T])
+            if np.random.rand() < 0.5:
+                g_star = self.higher_A(states[(t+1)*self.T]).argmax()
+                Q_h_target = self.higher_B(states[(t+1)*self.T])[g_star].detach() # detach?
+            else:
+                g_star = self.higher_B(states[(t+1)*self.T]).argmax()
+                Q_h_target = self.higher_A(states[(t+1)*self.T])[g_star].detach()
+            target_h = r_h[t] + (gamma_h ** self.T) * Q_h_target * (1 - dones[(t+1)*self.T])
             error_h = target_h - Q_hs[t][goals[t]]
             loss_h += 0.5 * error_h.pow(2)
 
@@ -155,13 +170,15 @@ class feudal_DQN(nn.Module):
         self.lower_optimizer.zero_grad()
         lower_loss = loss_l #+ policy_loss
         lower_loss.backward(retain_graph=True)
-        torch.nn.utils.clip_grad_norm_(self.lower.parameters(), max_norm=0.5)
+        torch.nn.utils.clip_grad_norm_(self.lower_A.parameters(), max_norm=0.5)
+        torch.nn.utils.clip_grad_norm_(self.lower_B.parameters(), max_norm=0.5)
         self.lower_optimizer.step()
 
         self.higher_optimizer.zero_grad()
         higher_loss = loss_h + self.gl_wt * goal_loss
         higher_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.higher.parameters(), max_norm=0.5)
+        torch.nn.utils.clip_grad_norm_(self.higher_A.parameters(), max_norm=0.5)
+        torch.nn.utils.clip_grad_norm_(self.higher_B.parameters(), max_norm=0.5)
         self.higher_optimizer.step()
 
 
@@ -181,7 +198,7 @@ def main():
     n_steps_per_update = 400
     rl_wt = 0.8
     gl_wt = 0.8
-    action_eps = 0.01
+    action_eps = 0.1
 
 
     train_agent = True
