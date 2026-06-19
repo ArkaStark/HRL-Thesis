@@ -135,11 +135,14 @@ class feudal_DQN(nn.Module):
                 if np.random.rand() < 0.5:
                     a_star = self.lower_A(states[t*self.T + k + 1], goals[t]).argmax()
                     Q_l_target = self.lower_B(states[t*self.T + k + 1], goals[t])[a_star].detach() # detach?
-                else:                    
+                    target_l = r_l[k] + gamma_l * Q_l_target * (1 - dones[t*self.T + k + 1])
+                    error_l = target_l - Q_ls[t*self.T + k][actions[t*self.T + k]]
+                else:
                     a_star = self.lower_B(states[t*self.T + k + 1], goals[t]).argmax()
-                    Q_l_target = self.lower_A(states[t*self.T + k + 1], goals[t])[a_star].detach()
-                target_l = r_l[k] + gamma_l * Q_l_target * (1 - dones[t*self.T + k + 1])
-                error_l = target_l - Q_ls[t*self.T + k][actions[t*self.T + k]]
+                    Q_l_target = self.lower_A(states[t*self.T + k + 1], goals[t])[a_star].detach() # detach?
+                    target_l = r_l[k] + gamma_l * Q_l_target * (1 - dones[t*self.T + k + 1])
+                    error_l = target_l - self.lower_B(states[t*self.T + k], goals[t])[actions[t*self.T + k]]
+                
                 loss_l += 0.5 * error_l.pow(2)
 
                 # policy_loss += -log_probs[t*self.T + k] * error_l.detach() - ent_coef * entropies[t*self.T + k].detach() # remove policy
@@ -148,11 +151,13 @@ class feudal_DQN(nn.Module):
             if np.random.rand() < 0.5:
                 g_star = self.higher_A(states[(t+1)*self.T]).argmax()
                 Q_h_target = self.higher_B(states[(t+1)*self.T])[g_star].detach() # detach?
+                target_h = r_h[t] + (gamma_h ** self.T) * Q_h_target * (1 - dones[(t+1)*self.T])
+                error_h = target_h - Q_hs[t][goals[t]]
             else:
                 g_star = self.higher_B(states[(t+1)*self.T]).argmax()
-                Q_h_target = self.higher_A(states[(t+1)*self.T])[g_star].detach()
-            target_h = r_h[t] + (gamma_h ** self.T) * Q_h_target * (1 - dones[(t+1)*self.T])
-            error_h = target_h - Q_hs[t][goals[t]]
+                Q_h_target = self.higher_A(states[(t+1)*self.T])[g_star].detach() # detach?
+                target_h = r_h[t] + (gamma_h ** self.T) * Q_h_target * (1 - dones[(t+1)*self.T])
+                error_h = target_h - self.higher_B(states[t*self.T])[goals[t]]
             loss_h += 0.5 * error_h.pow(2)
 
             # directional vector from state at time tT to state at time (t+1)T for x, y 
@@ -194,11 +199,11 @@ def main():
     gamma_l = 0.95
     T = 10
     goal_dim = 8
-    n_updates = 1000
+    n_updates = 2000
     n_steps_per_update = 400
     rl_wt = 0.8
     gl_wt = 0.8
-    action_eps = 0.1
+    action_eps = 0.05
 
 
     train_agent = True
