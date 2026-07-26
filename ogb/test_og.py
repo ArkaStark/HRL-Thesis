@@ -31,6 +31,7 @@ for task_id in [1]:
         # `reward` is 1 if the agent reaches the goal and 0 otherwise.
         done = terminated or truncated
         frame = env.render()  # Render the current frame (optional).
+        print(frame)
         render.append(frame)
 
     success = info['success']  # Whether the agent reached the goal (0 or 1).

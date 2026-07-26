@@ -9,34 +9,88 @@ import wandb
 import os
 from tqdm import tqdm
 
+class Reshape(nn.Module):
+    """Utility module to reshape tensors in Sequential models."""
+
+    def __init__(self, shape):
+        super().__init__()
+        self.shape = shape
+
+    def forward(self, x):
+        return x.reshape(self.shape)
+
+class Perception(nn.Module):
+    """Perception Network for processing visual inputs."""
+
+    def __init__(self, obs_shape, d, device: torch.device = torch.device("cpu")):
+        super().__init__()
+        self.device = device
+        if len(obs_shape) == 3:
+            channels, height, width = obs_shape
+        elif len(obs_shape) == 2:
+            height, width = obs_shape
+            channels = 1  # Assume single channel for grayscale images
+        else:
+            raise ValueError("Unsupported observation shape for perception network.")
+        # print(f"Observation shape: {obs_shape}")
+        percept_linear_input_dim = 32 * int((int((height - 4) / 4) - 2) / 2) * int((int((width - 4) / 4) - 2) / 2)
+        # print(f"Perception linear input dimension: {percept_linear_input_dim}")
+        self.f_percept = nn.Sequential(
+            nn.Conv2d(in_channels=channels, out_channels=16, kernel_size=8, stride=4, device=self.device),
+            nn.ReLU(),
+            nn.Conv2d(in_channels=16, out_channels=32, kernel_size=4, stride=2, device=self.device),
+            nn.ReLU(),
+            Reshape((percept_linear_input_dim)),
+            nn.Linear(percept_linear_input_dim, d, device=self.device),
+            nn.ReLU(),
+            Reshape((-1, d)),
+        )
+        
+
+    def forward(self, x):
+        return self.f_percept(x)
+
 # --- Option-Critic Network ---
 class OCAgent(nn.Module):
-    def __init__(self, state_dim, action_dim, device="cpu", hyperparams=None):
+    def __init__(self, state_dim, action_dim, percept=False, device="cpu", hyperparams={}):
         super(OCAgent, self).__init__()
         self.action_dim = action_dim
         self.device = device
 
         self.LR = hyperparams.get("LR", 1e-3)
         self.GAMMA = hyperparams.get("GAMMA", 0.99)
-        self.NUM_OPTIONS = hyperparams.get("NUM_OPTIONS", 3)
+        self.NUM_OPTIONS = hyperparams.get("NUM_OPTIONS", 4)
         self.ENTROPY_WEIGHT = hyperparams.get("ENTROPY_WEIGHT", 0.01)
         self.EPSILON_START = hyperparams.get("EPSILON_START", 1.0)
         self.EPSILON_MIN = hyperparams.get("EPSILON_MIN", 0.1)
         self.EPSILON_DECAY = hyperparams.get("EPSILON_DECAY", 0.995)
-        self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 1000)
-        self.TERM_REG = hyperparams.get("TERM_REG", 0.05)
+        self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 2000)
+        self.TERM_REG = hyperparams.get("TERM_REG", 0.001)
         
         self.wandb_upload = hyperparams.get("wandb_upload", False)
         self.save_model = hyperparams.get("save_model", False)
-        self.load_model = hyperparams.get("load_model", False)
+        self.load_model = hyperparams.get("load_model", True)
 
-        # Shared feature extractor
-        self.features = nn.Sequential(
-            nn.Linear(state_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU()
-        )
+        self.percept = percept
+
+        if self.percept:
+            self.perception = Perception(state_dim, d=128, device=self.device)
+            state_dim = 128  # Update state_dim after perception network
+            self.features = nn.Sequential(
+                self.perception,
+                nn.Linear(state_dim, 128),
+                nn.ReLU(),
+                nn.Linear(128, 128),
+                nn.ReLU()
+            )
+        else:
+            # Shared feature extractor
+            self.features = nn.Sequential(
+                nn.Linear(state_dim, 128),
+                nn.ReLU(),
+                nn.Linear(128, 128),
+                nn.ReLU()
+            )
         
         # Q-values for options: Q_Omega(s, omega)
         self.Q_options = nn.Linear(128, self.NUM_OPTIONS)
@@ -51,6 +105,14 @@ class OCAgent(nn.Module):
         self.optimizer = optim.Adam(self.parameters(), lr=self.LR)
 
         self.to(self.device)
+
+        self.trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)   
+        self.total_params = sum(p.numel() for p in self.parameters())   
+
+        unique_params = {p.data_ptr(): p for p in self.parameters()}.values()
+        self.total_unique_params = sum(p.numel() for p in unique_params)   
+
+        print(f"Trainable parameters: {self.trainable_params}, Total parameters: {self.total_params}, Total unique parameters: {self.total_unique_params}")
 
     def forward(self, state):
         phi = self.features(state)
@@ -78,39 +140,54 @@ class OCAgent(nn.Module):
         
         return action.item(), log_prob, entropy
 
-    def train(self, env):
+    def train_agent(self, env, delay_steps=0, delay_type=None, noise_std=0.0, noise_type=None):
 
         env_name = env.spec.id
 
-        model_path = f"Weights/{env_name}_OC/model_{self.MAX_EPISODES}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}.pt"
+        model_path = f"Weights/{env_name}_OC/model_{self.MAX_EPISODES}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}_x.pt"
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
-        # if self.wandb_upload:
-        #     # Start a new wandb run to track this script.
-        #     run = wandb.init(
-        #         # Set the wandb entity where your project will be logged (generally your team name).
-        #         entity="arkapatra31-ust",
-        #         # Set the wandb project where this run will be logged.
-        #         project="OC-Train",
-        #         # Track hyperparameters and run metadata.
-        #         config={
-        #             "env": env_name,
-        #             "num_options": self.NUM_OPTIONS,
-        #             "learning_rate": self.LR,
-        #             "gamma": self.GAMMA,
-        #             "entropy_weight": self.ENTROPY_WEIGHT,
-        #             "epsilon_start": self.EPSILON_START,
-        #             "epsilon_min": self.EPSILON_MIN,
-        #             "epsilon_decay": self.EPSILON_DECAY,
-        #             "max_episodes": self.MAX_EPISODES,
-        #             "termination_regularization": self.TERM_REG
-        #         },
-        #     )
+        if self.wandb_upload:
+            # Start a new wandb run to track this script.
+            run = wandb.init(
+                # Set the wandb entity where your project will be logged (generally your team name).
+                entity="arkapatra31-ust",
+                # Set the wandb project where this run will be logged.
+                project="OC-Train",
+                # Track hyperparameters and run metadata.
+                config={
+                    "env": env_name,
+                    "num_options": self.NUM_OPTIONS,
+                    "learning_rate": self.LR,
+                    "gamma": self.GAMMA,
+                    "entropy_weight": self.ENTROPY_WEIGHT,
+                    "epsilon_start": self.EPSILON_START,
+                    "epsilon_min": self.EPSILON_MIN,
+                    "epsilon_decay": self.EPSILON_DECAY,
+                    "max_episodes": self.MAX_EPISODES,
+                    "termination_regularization": self.TERM_REG,
+                    "delay_steps": delay_steps,
+                    "delay_type": delay_type,
+                    "noise_std": noise_std,
+                    "noise_type": noise_type,
+                    "model_path": model_path,
+                    "trainable_params": self.trainable_params,
+                    "total_params": self.total_params,
+                    "total_unique_params": self.total_unique_params
+                },
+            )
+            run.name = f"{env_name}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.6f}_TermReg_{self.TERM_REG:.3f}"
 
         epsilon = self.EPSILON_START
         reward_history = []
 
+        if delay_steps > 0 and delay_type is not None:
+            env = delay_injection(env, delay_steps=delay_steps, delay_type=delay_type)
+        if noise_std > 0 and noise_type is not None:
+            env = noise_injection(env, noise_std=noise_std, noise_type=noise_type)
+
         for episode in tqdm(range(self.MAX_EPISODES)):
+
             state, _ = env.reset()
             state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             
@@ -221,15 +298,21 @@ class OCAgent(nn.Module):
 
         env.close()
 
-    def test(self, env, n_episodes=1):
+    def test_agent(self, env, n_episodes=1, delay_steps=0, delay_type=None, noise_std=0.0, noise_type=None):
 
         env_name = env.spec.id
 
-        model_path = f"Weights/{env_name}_OC/model_{self.MAX_EPISODES}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}.pt"
+        model_path = f"Weights/{env_name}_OC/model_{self.MAX_EPISODES}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}_x.pt"
 
         """ load network weights """
         if self.load_model:
+            print(f"Loading model from {model_path}")
             self.load_state_dict(torch.load(model_path))
+
+        if delay_steps > 0 and delay_type is not None:
+            env = delay_injection(env, delay_steps=delay_steps, delay_type=delay_type)
+        if noise_std > 0 and noise_type is not None:
+            env = noise_injection(env, noise_std=noise_std, noise_type=noise_type)
 
         """ play a couple of showcase episodes """
         for episode in range(n_episodes):
@@ -240,6 +323,7 @@ class OCAgent(nn.Module):
                     entity="arkapatra31-ust",
                     # Set the wandb project where this run will be logged.
                     project="OC-Test",
+                    group=f"{env_name}-{n_episodes}-Obs-Noise-0.1",
                     # Track hyperparameters and run metadata.
                     config={
                         "env": env_name,
@@ -252,9 +336,14 @@ class OCAgent(nn.Module):
                         "epsilon_decay": self.EPSILON_DECAY,
                         "max_episodes": self.MAX_EPISODES,
                         "termination_regularization": self.TERM_REG,
+                        "delay_steps": delay_steps,
+                        "delay_type": delay_type,
+                        "noise_std": noise_std,
+                        "noise_type": noise_type,
+                        "model_path": model_path,
                     },
                 )
-                run.name = f"OC_Test_Episode_{episode + 1}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.6f}_TermReg_{self.TERM_REG:.3f}"
+                run.name = f"{env_name}_{episode + 1}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.6f}_TermReg_{self.TERM_REG:.3f}"
 
             state, _ = env.reset()
             state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
@@ -320,15 +409,15 @@ class OCAgent(nn.Module):
 
             print(f"Episode {episode + 1}: Total Reward: {episode_reward}")
 
-def hyperparameter_tuning(env, state_dim, action_dim, device="cpu"):
+def hyperparameter_tuning(env, state_dim, action_dim, percept=False, device="cpu"):
     # Define a grid of hyperparameters to sweep over
     sweep_config = {
         'method': 'bayes',
         'metric': {'name': 'episode_reward', 'goal': 'maximize'},
         'parameters': {
-            'LR': {'distribution': 'log_uniform_values', 'min': 1e-5, 'max': 1e-3},
-            'NUM_OPTIONS': {'values': [2, 3, 4]},
-            'TERM_REG': {'distribution': 'uniform', 'min': 1e-3, 'max': 1e-2},
+            'LR': {'distribution': 'log_uniform_values', 'min': 1e-4, 'max': 1e-3},
+            'NUM_OPTIONS': {'values': [4]},
+            'TERM_REG': {'distribution': 'uniform', 'min': 1e-4, 'max': 5e-3},
         },
         'early_terminate': {'type': 'hyperband', 'min_iter': 3}
     }
@@ -346,11 +435,78 @@ def hyperparameter_tuning(env, state_dim, action_dim, device="cpu"):
                 "TERM_REG": config.TERM_REG,
                 "wandb_upload": True,
             }
-            wandb.run.name = f"OC_nOpt_{hyperparams['NUM_OPTIONS']}_LR_{hyperparams['LR']:.6f}_TermReg_{hyperparams['TERM_REG']:.3f}"
+            wandb.run.name = f"nOpt_{hyperparams['NUM_OPTIONS']}_LR_{hyperparams['LR']:.4f}_TermReg_{hyperparams['TERM_REG']:.4f}_{env.spec.id}"
             print(f"Starting a new sweep run with hyperparameters:\n {hyperparams}")
-            oc_agent = OCAgent(state_dim, action_dim, device=device, hyperparams=hyperparams)
-            oc_agent.train(env=env)
-            oc_agent.test(env=env, n_episodes=3)
+            oc_agent = OCAgent(state_dim, action_dim, percept=percept, device=device, hyperparams=hyperparams)
+            oc_agent.train_agent(env=env)
+            # oc_agent.test_agent(env=env, n_episodes=3)
 
     # Start the sweep agent to run the training function for each configuration
-    wandb.agent(sweep_id, function=train_sweep, count=3)  # Adjust count as needed for the number of runs
+    wandb.agent(sweep_id, function=train_sweep, count=5)  # Adjust count as needed for the number of runs
+
+def delay_injection(env, delay_steps=5, delay_type='observation'):
+
+    if delay_type == 'observation':
+        """Injects a delay in the environment's observations."""
+        original_step = env.step
+
+        def delayed_step(action):
+            obs, reward, terminated, truncated, info = original_step(action)
+            # Introduce a delay by returning the previous observation for 'delay_steps' steps
+            if not hasattr(env, 'delay_buffer'):
+                env.delay_buffer = [obs] * delay_steps
+            else:
+                env.delay_buffer.append(obs)
+                if len(env.delay_buffer) > delay_steps:
+                    env.delay_buffer.pop(0)
+            delayed_obs = env.delay_buffer[0]
+            # print(f"Delayed observation: {delayed_obs}")
+            return delayed_obs, reward, terminated, truncated, info
+
+    elif delay_type == 'action':
+        """Injects a delay in the environment's actions."""
+        original_step = env.step
+
+        def delayed_step(action):
+            if not hasattr(env, 'action_buffer'):
+                env.action_buffer = [action] * delay_steps
+            else:
+                env.action_buffer.append(action)
+                if len(env.action_buffer) > delay_steps:
+                    env.action_buffer.pop(0)
+            delayed_action = env.action_buffer[0]
+            return original_step(delayed_action)
+
+    env.step = delayed_step
+    return env
+    
+def noise_injection(env, noise_std=0.1, noise_type='observation'):
+
+    if noise_type == 'observation':
+        """Injects Gaussian noise into the environment's observations."""
+        original_step = env.step
+
+        def noisy_step(action):
+            obs, reward, terminated, truncated, info = original_step(action)
+            noisy_obs = obs + np.random.normal(0, noise_std, size=obs.shape)
+            return noisy_obs, reward, terminated, truncated, info
+
+    elif noise_type == 'action':
+        if env.action_space.__class__.__name__ != 'Discrete':
+            """Chooses random actions if with nois_std probability, otherwise takes the original action."""
+            original_step = env.step
+
+            def noisy_step(action):
+                if np.random.rand() < noise_std:
+                    action = env.action_space.sample()
+                return original_step(action)
+        else:
+            """Injects Gaussian noise into the environment's actions."""
+            original_step = env.step
+
+            def noisy_step(action):
+                noisy_action = action + np.random.normal(0, noise_std, size=action.shape)
+                return original_step(noisy_action)
+
+    env.step = noisy_step
+    return env
