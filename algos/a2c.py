@@ -10,8 +10,17 @@ import wandb
 import cv2
 
 import gymnasium as gym
-import ale_py
-gym.register_envs(ale_py)
+
+SEED = 31
+np.random.seed(SEED)
+# 1. Set seeds for PyTorch (CPU and GPU)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
+
+# 2. Ensure deterministic behavior for CuDNN
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
 
 class A2CAgent(nn.Module):
 
@@ -19,20 +28,18 @@ class A2CAgent(nn.Module):
         """Initializes the actor and critic networks and their respective optimizers."""
         super().__init__()
 
-        self.n_updates = hyperparams.get("n_updates", 2000)
-        self.n_steps_per_update = hyperparams.get("n_steps_per_update", 100)
-        self.randomize_domain = hyperparams.get("randomize_domain", False)
+        self.n_updates = hyperparams.get("N_UPDATES", 2000)
+        self.n_steps_per_update = hyperparams.get("N_STEPS_PER_UPDATE", 100)
 
         # agent hyperparams
-        self.gamma = hyperparams.get("gamma", 0.99)
-        self.lam = hyperparams.get("lam", 0.95)  # hyperparameter for GAE
-        self.ent_coef = hyperparams.get("ent_coef", 0.01)  # coefficient for the entropy bonus (to encourage exploration)
-        self.actor_lr = hyperparams.get("actor_lr", 0.003)
-        self.critic_lr = hyperparams.get("critic_lr", 0.003)
+        self.gamma = hyperparams.get("GAMMA", 0.99)
+        self.lam = hyperparams.get("LAM", 0.95)  # hyperparameter for GAE
+        self.ent_coef = hyperparams.get("ENT_COEF", 0.01)  # coefficient for the entropy bonus (to encourage exploration)
+        self.actor_lr = hyperparams.get("ACTOR_LR", 0.003)
+        self.critic_lr = hyperparams.get("CRITIC_LR", 0.003)
 
-        self.wandb_upload = hyperparams.get("wandb_upload", False)
-        self.save_model = hyperparams.get("save_model", False)
-        self.load_model = hyperparams.get("load_model", True)
+        self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
+        self.save_model = hyperparams.get("SAVE_MODEL", False)
 
         # Note: the actor has a slower learning rate so that the value targets become
         # more stationary and are theirfore easier to estimate for the critic
@@ -201,7 +208,7 @@ class A2CAgent(nn.Module):
         # critic_losses = []
         # actor_losses = []
         # entropies = []
-        ep_step = 0
+        env_steps = 0
         episode_returns = []
         episode_lengths = []
         episode_return = 0
@@ -245,16 +252,10 @@ class A2CAgent(nn.Module):
                 episode_return += rewards
                 episode_length += 1
                 done = terminated or truncated
-                ep_step += 1
+                env_steps += 1
 
                 if self.wandb_upload:
-                    wandb.log(
-                        {
-                            "ep_step": ep_step
-                        }
-                    )
-
-
+                    wandb.log({"env_steps": env_steps})
 
                  # add a mask (for the return calculation later);
                 # for each env the mask is 1 if the episode is ongoing and 0 if it is terminated (not by truncation!)
@@ -346,7 +347,7 @@ class A2CAgent(nn.Module):
                     # Track hyperparameters and run metadata.
                     config={
                         "env": env_name,
-                        "architecture": "A2C",
+                        "algo": "A2C",
                         "actor_lr": self.actor_lr,
                         "critic_lr": self.critic_lr,
                         "n_updates": self.n_updates,
@@ -399,117 +400,3 @@ class A2CAgent(nn.Module):
             wandb.finish()
 
         env.close()
-
-def hyperparameter_tuning(env, state_dim, action_dim, percept=False, device="cpu"):
-    # Define a grid of hyperparameters to sweep over
-    sweep_config = {
-        'method': 'grid',
-        'metric': {'name': 'mean_episode_return', 'goal': 'maximize'},
-        'parameters': {
-            'LR_ACTOR': {'values': [1e-3, 3e-3, 5e-3]},
-            'LR_CRITIC': {'values': [1e-3, 3e-3, 5e-3]},
-            'ent_coef': {'values': [0.01, 0.1]},
-        },
-        # 'early_terminate': {'type': 'hyperband', 'min_iter': 3}
-    }
-
-    # Initialize a W&B sweep
-    sweep_id = wandb.sweep(sweep_config, project="A2C-Hyperparameter-Tuning", entity="arkapatra31-ust")
-
-    # Define the training function for the sweep
-    def train_sweep():
-        with wandb.init() as run:
-            config = wandb.config
-            hyperparams = {
-                "LR_ACTOR": config.LR_ACTOR,
-                "LR_CRITIC": config.LR_CRITIC,
-                "ent_coef": config.ent_coef,
-                "wandb_upload": True,
-            }
-            wandb.run.name = f"{env.spec.id}_alr-{config.LR_ACTOR:.4f}_clr-{config.LR_CRITIC:.4f}_entcf-{config.ent_coef:.3f}"
-            print(f"Starting a new sweep run with hyperparameters:\n {hyperparams}")
-            a2c_agent = A2CAgent(state_dim, action_dim, hyperparams=hyperparams, device=device)
-            a2c_agent.train_agent(env=env, store_episode_stats=True)
-            # a2c_agent.test_agent(env=env, n_episodes=3)
-
-    # Start the sweep agent to run the training function for each configuration
-    wandb.agent(sweep_id, function=train_sweep, count=10)  # Adjust count as needed for the number of runs
-
-def delay_injection(env, delay_steps=5, delay_type='observation'):
-
-    if getattr(env, '_delay_wrapped', False):
-        return env
-
-    if delay_type == 'observation':
-        """Injects a delay in the environment's observations."""
-        original_step = env.step
-
-        def delayed_step(action):
-            obs, reward, terminated, truncated, info = original_step(action)
-            # Introduce a delay by returning the previous observation for 'delay_steps' steps
-            if not hasattr(env, 'delay_buffer'):
-                env.delay_buffer = [obs] * delay_steps
-            else:
-                env.delay_buffer.append(obs)
-                if len(env.delay_buffer) > delay_steps:
-                    env.delay_buffer.pop(0)
-            delayed_obs = env.delay_buffer[0]
-            # print(f"Delayed observation: {delayed_obs}")
-            return delayed_obs, reward, terminated, truncated, info
-
-    elif delay_type == 'action':
-        """Injects a delay in the environment's actions."""
-        original_step = env.step
-
-        def delayed_step(action):
-            if not hasattr(env, 'action_buffer'):
-                env.action_buffer = [action] * delay_steps
-            else:
-                env.action_buffer.append(action)
-                if len(env.action_buffer) > delay_steps:
-                    env.action_buffer.pop(0)
-            delayed_action = env.action_buffer[0]
-            return original_step(delayed_action)
-    else:
-        raise ValueError(f"Unsupported delay_type: {delay_type}")
-
-    env.step = delayed_step
-    env._delay_wrapped = True
-    return env
-    
-def noise_injection(env, noise_std=0.1, noise_type='observation'):
-
-    if getattr(env, '_noise_wrapped', False):
-        return env
-
-    if noise_type == 'observation':
-        """Injects Gaussian noise into the environment's observations."""
-        original_step = env.step
-
-        def noisy_step(action):
-            obs, reward, terminated, truncated, info = original_step(action)
-            noisy_obs = obs + np.random.normal(0, noise_std, size=obs.shape)
-            return noisy_obs, reward, terminated, truncated, info
-
-    elif noise_type == 'action':
-        if env.action_space.__class__.__name__ != 'Discrete':
-            """Chooses random actions if with nois_std probability, otherwise takes the original action."""
-            original_step = env.step
-
-            def noisy_step(action):
-                if np.random.rand() < noise_std:
-                    action = env.action_space.sample()
-                return original_step(action)
-        else:
-            """Injects Gaussian noise into the environment's actions."""
-            original_step = env.step
-
-            def noisy_step(action):
-                noisy_action = action + np.random.normal(0, noise_std, size=action.shape)
-                return original_step(noisy_action)
-    else:
-        raise ValueError(f"Unsupported noise_type: {noise_type}")
-
-    env.step = noisy_step
-    env._noise_wrapped = True
-    return env

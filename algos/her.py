@@ -12,6 +12,17 @@ import wandb
 import os
 import cv2
 
+SEED = 31
+np.random.seed(SEED)
+# 1. Set seeds for PyTorch (CPU and GPU)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
+
+# 2. Ensure deterministic behavior for CuDNN
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 # --- Neural Networks ---
 class Actor(torch_nn.Module):
     def __init__(self, state_dim, action_dim, max_action):
@@ -70,7 +81,7 @@ class HERAgent(torch_nn.Module):
         self.GAMMA = hyperparams.get("GAMMA", 0.98)            # Discount factor
         self.TAU = hyperparams.get("TAU", 0.05)             # Soft update parameter for target networks
         self.BATCH_SIZE = hyperparams.get("BATCH_SIZE", 128)         # Mini-batch size
-        self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 100000)     # Maximum number of episodes to train
+        self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 1000)     # Maximum number of episodes to train
         self.EXPLORATION_NOISE = hyperparams.get("EXPLORATION_NOISE", 0.1) # Standard deviation of Gaussian noise for exploration
         self.RANDOM_START_STEPS = hyperparams.get("RANDOM_START_STEPS", 1000)    # Number of random steps to populate the replay buffer before training
         self.MAX_ACTION = hyperparams.get("MAX_ACTION", 5.0)          # Maximum action value (-x, x) for continuous action spaces
@@ -79,8 +90,8 @@ class HERAgent(torch_nn.Module):
         self.NUM_UPDATES = hyperparams.get("NUM_UPDATES", 4)          # Number of DDPG updates per episode
         self.ALPHA = hyperparams.get("ALPHA", 0)                   # Weight for the HER loss term
 
-        self.wandb_upload = hyperparams.get("wandb_upload", False)
-        self.save_weights = hyperparams.get("save_weights", False)
+        self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
+        self.save_weights = hyperparams.get("SAVE_WEIGHTS", False)
 
         goal_dim = 3  # Assuming the goal is represented in the same space as the state
 
@@ -413,114 +424,3 @@ class HERAgent(torch_nn.Module):
 
             for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
                 target_param.data.copy_(self.TAU * param.data + (1 - self.TAU) * target_param.data)
-
-def hyperparameter_tuning(env, state_dim, action_dim, percept=False, device="cpu"):
-    # Define a grid of hyperparameters to sweep over
-    sweep_config = {
-        'method': 'grid',
-        'metric': {'name': 'episode_reward', 'goal': 'maximize'},
-        'parameters': {
-            # 'ALPHA': {'distribution': 'uniform', 'min': 1e-3, 'max': 1.0},
-            'ALPHA': {'values': [0.01, 0.2, 0.5, 0.8, 1.0]},
-        },
-        # 'early_terminate': {'type': 'hyperband', 'min_iter': 3}
-    }
-
-    # Initialize a W&B sweep
-    sweep_id = wandb.sweep(sweep_config, project="HER-Hyperparameter-Tuning", entity="arkapatra31-ust")
-
-    # Define the training function for the sweep
-    def train_sweep():
-        with wandb.init() as run:
-            config = wandb.config
-            hyperparams = {
-                "ALPHA": config.ALPHA,
-                "wandb_upload": True,
-            }
-            wandb.run.name = f"HER_alpha_{config.ALPHA}_{env.spec.id}"
-            print(f"Starting a new sweep run with hyperparameters:\n {hyperparams}")
-            her_agent = HERAgent(state_dim, action_dim, hyperparams=hyperparams, device=device)
-            her_agent.train_agent(env=env)
-            # her_agent.test_agent(env=env, n_episodes=3)
-
-    # Start the sweep agent to run the training function for each configuration
-    wandb.agent(sweep_id, function=train_sweep, count=5)  # Adjust count as needed for the number of runs
-
-def delay_injection(env, delay_steps=5, delay_type='observation'):
-
-    if getattr(env, '_delay_wrapped', False):
-        return env
-
-    if delay_type == 'observation':
-        """Injects a delay in the environment's observations."""
-        original_step = env.step
-
-        def delayed_step(action):
-            obs, reward, terminated, truncated, info = original_step(action)
-            # Introduce a delay by returning the previous observation for 'delay_steps' steps
-            if not hasattr(env, 'delay_buffer'):
-                env.delay_buffer = [obs] * delay_steps
-            else:
-                env.delay_buffer.append(obs)
-                if len(env.delay_buffer) > delay_steps:
-                    env.delay_buffer.pop(0)
-            delayed_obs = env.delay_buffer[0]
-            # print(f"Delayed observation: {delayed_obs}")
-            return delayed_obs, reward, terminated, truncated, info
-
-    elif delay_type == 'action':
-        """Injects a delay in the environment's actions."""
-        original_step = env.step
-
-        def delayed_step(action):
-            if not hasattr(env, 'action_buffer'):
-                env.action_buffer = [action] * delay_steps
-            else:
-                env.action_buffer.append(action)
-                if len(env.action_buffer) > delay_steps:
-                    env.action_buffer.pop(0)
-            delayed_action = env.action_buffer[0]
-            return original_step(delayed_action)
-    else:
-        raise ValueError(f"Unsupported delay_type: {delay_type}")
-
-    env.step = delayed_step
-    env._delay_wrapped = True
-    return env
-    
-def noise_injection(env, noise_std=0.1, noise_type='observation'):
-
-    if getattr(env, '_noise_wrapped', False):
-        return env
-
-    if noise_type == 'observation':
-        """Injects Gaussian noise into the environment's observations."""
-        original_step = env.step
-
-        def noisy_step(action):
-            obs, reward, terminated, truncated, info = original_step(action)
-            noisy_obs = obs + np.random.normal(0, noise_std, size=obs.shape)
-            return noisy_obs, reward, terminated, truncated, info
-
-    elif noise_type == 'action':
-        if env.action_space.__class__.__name__ != 'Discrete':
-            """Chooses random actions if with nois_std probability, otherwise takes the original action."""
-            original_step = env.step
-
-            def noisy_step(action):
-                if np.random.rand() < noise_std:
-                    action = env.action_space.sample()
-                return original_step(action)
-        else:
-            """Injects Gaussian noise into the environment's actions."""
-            original_step = env.step
-
-            def noisy_step(action):
-                noisy_action = action + np.random.normal(0, noise_std, size=action.shape)
-                return original_step(noisy_action)
-    else:
-        raise ValueError(f"Unsupported noise_type: {noise_type}")
-
-    env.step = noisy_step
-    env._noise_wrapped = True
-    return env

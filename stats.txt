@@ -1,0 +1,10 @@
+Environment: LunarLander-v3	Agent: FuNAgent	n_episodes: 200
+--------------------------------------------------------------------------------
+Average Reward: 137.12245961039685	Average Length: 478.425
+Standard Deviation Reward: 93.78850898573988	Standard Deviation Length: 288.4333447696365
+Coefficient of Variation Reward: 0.6839762738519948	Coefficient of Variation Length: 0.6028810049007399
+Std Error Reward: 6.631849070119212	Std Error Length: 20.395317400692736
+Confidence Interval Reward: 12.998424177433655	Confidence Interval Length: 39.97482210535776
+% confidence interval of mean reward: 9.48%
+% confidence interval of mean length: 8.36%
+--------------------------------------------------------------------------------

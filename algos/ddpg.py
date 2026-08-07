@@ -12,6 +12,17 @@ import wandb
 import os
 import cv2
 
+SEED = 31
+np.random.seed(SEED)
+# 1. Set seeds for PyTorch (CPU and GPU)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
+
+# 2. Ensure deterministic behavior for CuDNN
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 # --- Neural Networks ---
 class Actor(torch_nn.Module):
     def __init__(self, state_dim, action_dim, max_action):
@@ -65,20 +76,20 @@ class DDPGAgent(torch_nn.Module):
     def __init__(self, state_dim, action_dim, hyperparams={}, device="cpu"):
         super(DDPGAgent, self).__init__()
 
-        self.LR_ACTOR = hyperparams.get("actor_lr", 1e-4)
-        self.LR_CRITIC = hyperparams.get("critic_lr", 3e-4)
-        self.GAMMA = hyperparams.get("gamma", 0.99)
-        self.TAU = hyperparams.get("tau", 0.005)
-        self.BATCH_SIZE = hyperparams.get("batch_size", 64)
-        self.MAX_EPISODES = hyperparams.get("max_episodes", 2000)
-        self.EXPLORATION_NOISE = hyperparams.get("exploration_noise", 0.1)
-        self.RANDOM_START_STEPS = hyperparams.get("random_start_steps", 1000)
-        self.MAX_ACTION = hyperparams.get("max_action", 1.0)
-        self.BUFFER_SIZE = hyperparams.get("buffer_size", 1000000)
+        self.LR_ACTOR = hyperparams.get("LR_ACTOR", 1e-4)
+        self.LR_CRITIC = hyperparams.get("LR_CRITIC", 3e-4)
+        self.GAMMA = hyperparams.get("GAMMA", 0.99)
+        self.TAU = hyperparams.get("TAU", 0.005)
+        self.BATCH_SIZE = hyperparams.get("BATCH_SIZE", 64)
+        self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 2000)
+        self.EXPLORATION_NOISE = hyperparams.get("EXPLORATION_NOISE", 0.1)
+        self.RANDOM_START_STEPS = hyperparams.get("RANDOM_START_STEPS", 1000)
+        self.MAX_ACTION = hyperparams.get("MAX_ACTION", 1.0)
+        self.BUFFER_SIZE = hyperparams.get("BUFFER_SIZE", 1000000)
 
-        self.wandb_upload = hyperparams.get("wandb_upload", False)
-        self.save_weights = hyperparams.get("save_weights", False)
-        self.load_weights = hyperparams.get("load_weights", True)
+        self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
+        self.save_weights = hyperparams.get("SAVE_WEIGHTS", False)
+        self.load_weights = hyperparams.get("LOAD_WEIGHTS", True)
 
         self.actor = Actor(state_dim, action_dim, self.MAX_ACTION).to(device)
         self.actor_target = Actor(state_dim, action_dim, self.MAX_ACTION).to(device)
@@ -119,9 +130,6 @@ class DDPGAgent(torch_nn.Module):
 
     def train_agent(self, env):
 
-        wandb_upload = False      # Whether to upload logs to Weights & Biases
-        save_weights = False
-
         env_name = env.spec.id
 
         if env.action_space.__class__.__name__ == "Discrete":
@@ -133,7 +141,7 @@ class DDPGAgent(torch_nn.Module):
 
         os.makedirs(f"Weights/{env_name}_DDPG_weights", exist_ok=True)
 
-        if wandb_upload:
+        if self.wandb_upload:
             # Start a new wandb run to track this script.
             run = wandb.init(
                 # Set the wandb entity where your project will be logged (generally your team name).
@@ -143,6 +151,7 @@ class DDPGAgent(torch_nn.Module):
                 # Track hyperparameters and run metadata.
                 config={
                     "env": env_name,
+                    "algo": "DDPG",
                     "actor_lr": self.LR_ACTOR,
                     "critic_lr": self.LR_CRITIC,
                     "gamma": self.GAMMA,
@@ -162,28 +171,21 @@ class DDPGAgent(torch_nn.Module):
                 },
             )
 
-            # create a wrapper environment to save episode returns and episode lengths
-            # create a wrapper environment to save episode returns and episode lengths
-            # envs_wrapper = gym.wrappers.vector.RecordEpisodeStatistics(
-            #     envs, buffer_length=n_envs * n_updates
-            # )
+        env_steps = 0
 
-            critic_losses = []
-            actor_losses = []
-            entropies = []
-
-        obs, _ = env.reset()
+        obs, _ = env.reset(seed=SEED)
         for i in tqdm(range(self.RANDOM_START_STEPS)):
             action = env.action_space.sample()
             next_obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
             self.replay_buffer.add(obs, action, reward, next_obs, float(done))
             obs = next_obs
+            env_steps += 1
             if done:
-                obs, _ = env.reset()
+                obs, _ = env.reset(seed=SEED)
 
         for episode in tqdm(range(self.MAX_EPISODES)):
-            obs, info = env.reset()
+            obs, info = env.reset(seed=SEED)
             episode_reward = 0
             done = False
             
@@ -199,7 +201,11 @@ class DDPGAgent(torch_nn.Module):
                 self.replay_buffer.add(obs, action, reward, next_obs, float(done))
 
                 obs = next_obs
+                env_steps += 1
                 episode_reward += reward
+
+                if self.wandb_upload:
+                    wandb.log({"env_steps": env_steps})
 
                 if len(self.replay_buffer) > self.BATCH_SIZE:
             
@@ -247,23 +253,23 @@ class DDPGAgent(torch_nn.Module):
                     for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
                         target_param.data.copy_(self.TAU * param.data + (1 - self.TAU) * target_param.data)
 
-                    if wandb_upload:
+                    if self.wandb_upload:
                         # Log the losses and entropy to wandb
                         wandb.log({
                             "critic_loss": critic_loss.detach().cpu().numpy(),
                             "actor_loss": actor_loss.detach().cpu().numpy()
                         })
 
-            if wandb_upload:
+            if self.wandb_upload:
                 wandb.log({
                     "episode_reward": episode_reward
                 })
 
-        if wandb_upload:
+        if self.wandb_upload:
             run.finish()
 
         """ save network weights """
-        if save_weights:
+        if self.save_weights:
             torch.save(self.actor.state_dict(), actor_weights_path)
             torch.save(self.critic.state_dict(), critic_weights_path)
 
@@ -280,11 +286,6 @@ class DDPGAgent(torch_nn.Module):
         else:
             print("Weights not found. Please train the agent first.")
             return
-
-        if delay_steps > 0 and delay_type is not None:
-            env = delay_injection(env, delay_steps=delay_steps, delay_type=delay_type)
-        if noise_std > 0.0 and noise_type is not None:
-            env = noise_injection(env, noise_std=noise_std, noise_type=noise_type)
 
         for episode in range(n_episodes):
 
@@ -360,114 +361,3 @@ class DDPGAgent(torch_nn.Module):
             
             print(f"Episode {episode + 1}: Total Reward: {episode_reward}")
 
-def hyperparameter_tuning(env, state_dim, action_dim, percept=False, device="cpu"):
-    # Define a grid of hyperparameters to sweep over
-    sweep_config = {
-        'method': 'bayes',
-        'metric': {'name': 'episode_reward', 'goal': 'maximize'},
-        'parameters': {
-            'LR_ACTOR': {'values': [1e-4, 3e-4, 1e-3]},
-            'LR_CRITIC': {'values': [1e-4, 3e-4, 1e-3]},
-        },
-        'early_terminate': {'type': 'hyperband', 'min_iter': 3}
-    }
-
-    # Initialize a W&B sweep
-    sweep_id = wandb.sweep(sweep_config, project="DDPG-Hyperparameter-Tuning", entity="arkapatra31-ust")
-
-    # Define the training function for the sweep
-    def train_sweep():
-        with wandb.init() as run:
-            config = wandb.config
-            hyperparams = {
-                "LR_ACTOR": config.LR_ACTOR,
-                "LR_CRITIC": config.LR_CRITIC,
-                "wandb_upload": True,
-            }
-            wandb.run.name = f"DDPG_{config.LR_ACTOR:.4f}_{config.LR_CRITIC:.4f}_{env.spec.id}"
-            print(f"Starting a new sweep run with hyperparameters:\n {hyperparams}")
-            ddpg_agent = DDPGAgent(state_dim, action_dim, hyperparams=hyperparams, device=device)
-            ddpg_agent.train_agent(env=env)
-            # ddpg_agent.test_agent(env=env, n_episodes=3)
-
-    # Start the sweep agent to run the training function for each configuration
-    wandb.agent(sweep_id, function=train_sweep, count=5)  # Adjust count as needed for the number of runs
-
-def delay_injection(env, delay_steps=5, delay_type='observation'):
-
-    if getattr(env, '_delay_wrapped', False):
-        return env
-
-    if delay_type == 'observation':
-        """Injects a delay in the environment's observations."""
-        original_step = env.step
-
-        def delayed_step(action):
-            obs, reward, terminated, truncated, info = original_step(action)
-            # Introduce a delay by returning the previous observation for 'delay_steps' steps
-            if not hasattr(env, 'delay_buffer'):
-                env.delay_buffer = [obs] * delay_steps
-            else:
-                env.delay_buffer.append(obs)
-                if len(env.delay_buffer) > delay_steps:
-                    env.delay_buffer.pop(0)
-            delayed_obs = env.delay_buffer[0]
-            # print(f"Delayed observation: {delayed_obs}")
-            return delayed_obs, reward, terminated, truncated, info
-
-    elif delay_type == 'action':
-        """Injects a delay in the environment's actions."""
-        original_step = env.step
-
-        def delayed_step(action):
-            if not hasattr(env, 'action_buffer'):
-                env.action_buffer = [action] * delay_steps
-            else:
-                env.action_buffer.append(action)
-                if len(env.action_buffer) > delay_steps:
-                    env.action_buffer.pop(0)
-            delayed_action = env.action_buffer[0]
-            return original_step(delayed_action)
-    else:
-        raise ValueError(f"Unsupported delay_type: {delay_type}")
-
-    env.step = delayed_step
-    env._delay_wrapped = True
-    return env
-    
-def noise_injection(env, noise_std=0.1, noise_type='observation'):
-
-    if getattr(env, '_noise_wrapped', False):
-        return env
-
-    if noise_type == 'observation':
-        """Injects Gaussian noise into the environment's observations."""
-        original_step = env.step
-
-        def noisy_step(action):
-            obs, reward, terminated, truncated, info = original_step(action)
-            noisy_obs = obs + np.random.normal(0, noise_std, size=obs.shape)
-            return noisy_obs, reward, terminated, truncated, info
-
-    elif noise_type == 'action':
-        if env.action_space.__class__.__name__ != 'Discrete':
-            """Chooses random actions if with nois_std probability, otherwise takes the original action."""
-            original_step = env.step
-
-            def noisy_step(action):
-                if np.random.rand() < noise_std:
-                    action = env.action_space.sample()
-                return original_step(action)
-        else:
-            """Injects Gaussian noise into the environment's actions."""
-            original_step = env.step
-
-            def noisy_step(action):
-                noisy_action = action + np.random.normal(0, noise_std, size=action.shape)
-                return original_step(noisy_action)
-    else:
-        raise ValueError(f"Unsupported noise_type: {noise_type}")
-
-    env.step = noisy_step
-    env._noise_wrapped = True
-    return env

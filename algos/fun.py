@@ -1,16 +1,24 @@
 import gymnasium as gym
-import ale_py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-import matplotlib.pyplot as plt
 import os
 from tqdm import tqdm
 import wandb
 import cv2
 
-gym.register_envs(ale_py)
+SEED = 31
+np.random.seed(SEED)
+# 1. Set seeds for PyTorch (CPU and GPU)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
+
+# 2. Ensure deterministic behavior for CuDNN
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 
 def reset_grad2(t, requires_grad=None):
     tr = t.detach()
@@ -184,21 +192,21 @@ class FuNAgent(nn.Module):
         super(FuNAgent, self).__init__()
 
         #Hyperparameters
-        self.d = hyperparams.get("d", 256) # Dimension of the latent state representation
-        self.k = hyperparams.get("k", 16) # Number of goals for the worker
-        self.c = hyperparams.get("c", 10) # Prediction horizon for the manager
-        self.gamma_M = hyperparams.get("gamma_M", 0.99)
-        self.gamma_W = hyperparams.get("gamma_W", 0.95)
-        self.alpha = hyperparams.get("alpha", 0.8)
-        self.ent_coef = hyperparams.get("ent_coef", 0.001) # Entropy regularization coefficient
-        self.lr = hyperparams.get("lr", 3e-4)
+        self.d = hyperparams.get("GOAL_DIM", 256) # Dimension of the latent state representation for goals
+        self.k = hyperparams.get("N_GOALS", 16) # Number of goals for the worker
+        self.c = hyperparams.get("SUBGOAL_HORIZON", 10) # Prediction horizon for the manager
+        self.gamma_M = hyperparams.get("GAMMA_M", 0.99)
+        self.gamma_W = hyperparams.get("GAMMA_W", 0.95)
+        self.alpha = hyperparams.get("ALPHA", 0.8)
+        self.ent_coef = hyperparams.get("ENT_COEF", 0.001) # Entropy regularization coefficient
+        self.lr = hyperparams.get("LR", 3e-4)
+        self.b = hyperparams.get("BATCH_SIZE", 1) # Batch size for training
 
-        self.n_updates = hyperparams.get("n_updates", 5)
-        self.steps_per_update = hyperparams.get("steps_per_update", 400) # reaches 98% of total possible return using sum of gp a/(1-gamma) for gamma=0.99
+        self.n_updates = hyperparams.get("N_UPDATES", 2000)
+        self.steps_per_update = hyperparams.get("STEPS_PER_UPDATE", 400) # reaches 98% of total possible return using sum of gp a/(1-gamma) for gamma=0.99
 
-        self.wandb_upload = hyperparams.get("wandb_upload", False)
-        self.save_model = hyperparams.get("save_model", False)
-        self.load_model = hyperparams.get("load_model", True)
+        self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
+        self.save_model = hyperparams.get("SAVE_MODEL", False)
 
         self.device = device
         self.state_dim = state_dim
@@ -277,6 +285,7 @@ class FuNAgent(nn.Module):
         x = torch.as_tensor(x, dtype=torch.float32).to(self.device)
         hidden_M = states[1]
         z = self.perception(x) # Latent state representation [batch x d]
+        # z = Reshape((-1, self.d))(x) # Use raw observation as input to manager and worker
         value_M, g, s, hidden_M = self.manager(z, hidden_M, t, reset_value_grad)
         states = (states[0], hidden_M)
         self.goals.append(g)  # Store the latest goal for the worker
@@ -378,12 +387,13 @@ class FuNAgent(nn.Module):
         torch.nn.utils.clip_grad_norm_(self.parameters(), 0.5)
         self.optimizer.step()
 
-    def train_agent(self, env):
+    def train_agent(self, env, store_episode_rewards=False):
 
         env_name = env.spec.id
 
-        model_path = "Weights/Pong-v5/fun_20k_updates_d256_k16_c10_lr_0.0003_ent_0.001"
+        model_path = f"Weights/{env_name}_fun/2kupdates_d{self.d}_k{self.k}_c{self.c}_lr_{self.lr:.4f}_ent_{self.ent_coef:.4f}"
         # model_path = "Weights/Pong-v5/fun_3k_updates_d256_k16_c10_lr_3e-4_ent_1e-3"
+        os.makedirs(model_path, exist_ok=True)
 
         torch.autograd.set_detect_anomaly(True, check_nan=False)
 
@@ -414,9 +424,10 @@ class FuNAgent(nn.Module):
                     "total_unique_params": self.total_unique_params
                 },
             )
+            run.name = f"{env_name}_epochs_{self.n_updates}_lr_{self.lr:.4f}_ent_{self.ent_coef:.4f}"
     
-        if self.load_model:
-            self.load_state_dict(torch.load("Weights/Pong-v5/fun_10k_updates_d256_k16_c10_lr_3e-4_ent_1e-3/model.pt", map_location=self.device))
+        # if self.load_model:
+        #     self.load_state_dict(torch.load("Weights/Pong-v5/fun_10k_updates_d256_k16_c10_lr_3e-4_ent_1e-3/model.pt", map_location=self.device))
 
         # total_loss_history = []
         # critic_loss_history = []
@@ -427,8 +438,10 @@ class FuNAgent(nn.Module):
         ep_reward = 0
 
         self.train()
-        obs, _ = env.reset(seed = 0)
+        obs, _ = env.reset(seed = SEED)
         states = self.init_state()
+        env_steps = 0
+
         for epoch in tqdm(range(self.n_updates)):
 
             # print(f"============== Epoch: {epoch} ==============")
@@ -436,7 +449,7 @@ class FuNAgent(nn.Module):
             states = self.reset_states_grad(states)
 
             rewards = torch.zeros(self.steps_per_update, device=self.device)
-            obss = torch.zeros(self.steps_per_update, *self.state_dim, device=self.device)
+            obss = torch.zeros(self.steps_per_update, self.state_dim, device=self.device)
             dones = torch.zeros(self.steps_per_update, device=self.device)
             actions = torch.zeros(self.steps_per_update, device=self.device)
             log_probs = torch.zeros(self.steps_per_update, device=self.device)
@@ -450,6 +463,7 @@ class FuNAgent(nn.Module):
             # goals = torch.zeros(steps_per_update, agent.c, agent.b, agent.d, device=agent.device)  # Placeholder for c goals each step
             goals = torch.zeros(self.steps_per_update, self.b, self.d, device=self.device)  # Placeholder for 1 goal each step
             ss = torch.zeros(self.steps_per_update, self.b, self.d, device=self.device)  # Placeholder for s, will be filled in the loop
+
             for t in range(self.steps_per_update):
 
                 # print(f"----- Step: {t} ------")
@@ -472,6 +486,7 @@ class FuNAgent(nn.Module):
                 done = terminated or truncated
                 # reward = reward + info['lives']  # Add a bonus for keeping lives
                 # print(f"Info: {info}, Reward: {reward}, Terminated: {terminated}, Truncated: {truncated}")
+                env_steps += 1
 
                 dones[t] = done
                 ep_reward += reward
@@ -480,17 +495,20 @@ class FuNAgent(nn.Module):
                 log_probs[t] = log_prob.squeeze(0)
                 entropies[t] = entropy.squeeze(0)
 
-                rewards[t] = reward #scale reward?
+                rewards[t] = reward/200 #scale reward?
                 # print(f"Reward received: {reward}, Normalized reward: {rewards[t].item()}")#, reward_threshold=env.spec.reward_threshold)
                 values_M[t] = value_M.squeeze(0)
                 values_W[t] = value_W.squeeze(0)
+
+                if self.wandb_upload:
+                    run.log({"env_steps": env_steps})
                 
                 # print(f"Value_M: {value_M.item()}, Value_W: {value_W.item()}")
 
                 if done:
                     episodes_rewards.append(ep_reward)
                     ep_reward = 0
-                    obs, _ = env.reset(seed = epoch)
+                    obs, _ = env.reset(seed = SEED+epoch)
                     states = self.init_state()
 
             with torch.no_grad():
@@ -527,6 +545,14 @@ class FuNAgent(nn.Module):
                     "dir_cos": dcoss.mean().item(), # closer to 0 means better cosine embedding loss [-1, 1]
                 })
 
+            if self.save_model and (epoch + 1) % 100 == 0:
+                torch.save(self.state_dict(), f"{model_path}/model.pt")
+
+            if len(episodes_rewards)>10:
+                mean_reward = np.mean(episodes_rewards[-10:])
+                if self.wandb_upload:
+                    run.log({"avg_reward_last_10": mean_reward})
+
             # Append losses to history
             # total_loss_history.append((critic_loss_M + critic_loss_W + loss_M + loss_W).item())
             # critic_loss_history.append((critic_loss_M + critic_loss_W).item())
@@ -534,18 +560,20 @@ class FuNAgent(nn.Module):
             # manager_loss_history.append(loss_M.item())
             # entropy_history.append(entropies.mean().item())
 
-            if self.save_model:
-                os.makedirs(model_path, exist_ok=True)
-                torch.save(self.state_dict(), f"{model_path}/model.pt")
+        if self.wandb_upload:
+            run.finish()
 
-            if self.wandb_upload:
-                run.finish()
-
-    def test_agent(self, env, n_episodes=5):
+    def test_agent(self, env, n_episodes=1, record_stats=False):
 
         env_name = env.spec.id
 
-        model_path = "Weights/Pong-v5/fun_20k_updates_d256_k16_c10_lr_0.0003_ent_0.001"
+        model_path = f"Weights/{env_name}_fun/2kupdates_d{self.d}_k{self.k}_c{self.c}_lr_{self.lr:.4f}_ent_{self.ent_coef:.4f}"
+        self.load_state_dict(torch.load(f"{model_path}/model.pt", map_location=self.device))
+
+        if record_stats:
+            episode_rewards = []
+            episode_lengths = []
+
         for episode in range(n_episodes):
 
             if self.wandb_upload:
@@ -556,7 +584,7 @@ class FuNAgent(nn.Module):
                     project="FuN-Test",
                     # Track hyperparameters and run metadata.
                     config={
-                        "architecture": "FuN",
+                        "algo": "FuN",
                         "env": env_name,
                         "epochs": self.n_updates,
                         "steps_per_update": self.steps_per_update,
@@ -570,17 +598,16 @@ class FuNAgent(nn.Module):
                         "ent_coef": self.ent_coef,
                     },
                 )
-                run.name = f"{env_name}_{episode + 1}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.6f}_TermReg_{self.TERM_REG:.3f}"
+                run.name = f"{env_name}_{episode + 1}"
             
-            if self.load_model:
-                self.load_state_dict(torch.load(f"{model_path}/model.pt", map_location=self.device))
             
             self.eval()
 
-            obs, _ = env.reset(seed = 42)
+            obs, _ = env.reset()
             states = self.init_state()
             done = False
             t = 0
+            episode_reward = 0
             renders = []  # To store frames for video logging
 
             while not done:
@@ -595,6 +622,7 @@ class FuNAgent(nn.Module):
                 # print(f"Reward received: {reward}")
                 # print(f"Terminated: {terminated}, Truncated: {truncated}")
                 t += 1
+                episode_reward += reward
                 done = terminated or truncated
                 if self.wandb_upload:
                     # Capture the render for logging
@@ -616,104 +644,16 @@ class FuNAgent(nn.Module):
                     video = np.transpose(video, (0, 3, 1, 2))
                     wandb.log({"showcase_video": wandb.Video(video, fps=8, format="mp4")})
             wandb.finish()
-            env.close()
 
-def hyperparameter_tuning(env, state_dim, action_dim, percept=False, device="cpu"):
-    # Define a grid of hyperparameters to sweep over
-    sweep_config = {
-        'method': 'bayes',
-        'metric': {'name': 'episode_reward', 'goal': 'maximize'},
-        'parameters': {
-            'LR': {'distribution': 'log_uniform_values', 'min': 1e-4, 'max': 1e-3},
-        },
-        'early_terminate': {'type': 'hyperband', 'min_iter': 3}
-    }
+            if record_stats:
+                episode_rewards.append(float(episode_reward))
+                episode_lengths.append(t)
+                print(f"Episode {episode + 1}: Reward = {episode_reward}, Length = {t}")
 
-    # Initialize a W&B sweep
-    sweep_id = wandb.sweep(sweep_config, project="FuN-Hyperparameter-Tuning", entity="arkapatra31-ust")
+        env.close()
 
-    # Define the training function for the sweep
-    def train_sweep():
-        with wandb.init() as run:
-            config = wandb.config
-            hyperparams = {
-                "LR": config.LR,
-                "NUM_OPTIONS": config.NUM_OPTIONS,
-                "TERM_REG": config.TERM_REG,
-                "wandb_upload": True,
-            }
-            wandb.run.name = f"{env.spec.id}_LR_{hyperparams['LR']:.4f}"
-            print(f"Starting a new sweep run with hyperparameters:\n {hyperparams}")
-            fun_agent = FuNAgent(state_dim, action_dim, percept=percept, device=device, hyperparams=hyperparams)
-            fun_agent.train_agent(env=env)
-            # fun_agent.test_agent(env=env, n_episodes=3)
+        if record_stats:
+            return episode_rewards, episode_lengths
 
-    # Start the sweep agent to run the training function for each configuration
-    wandb.agent(sweep_id, function=train_sweep, count=5)  # Adjust count as needed for the number of runs
 
-def delay_injection(env, delay_steps=5, delay_type='observation'):
 
-    if delay_type == 'observation':
-        """Injects a delay in the environment's observations."""
-        original_step = env.step
-
-        def delayed_step(action):
-            obs, reward, terminated, truncated, info = original_step(action)
-            # Introduce a delay by returning the previous observation for 'delay_steps' steps
-            if not hasattr(env, 'delay_buffer'):
-                env.delay_buffer = [obs] * delay_steps
-            else:
-                env.delay_buffer.append(obs)
-                if len(env.delay_buffer) > delay_steps:
-                    env.delay_buffer.pop(0)
-            delayed_obs = env.delay_buffer[0]
-            # print(f"Delayed observation: {delayed_obs}")
-            return delayed_obs, reward, terminated, truncated, info
-
-    elif delay_type == 'action':
-        """Injects a delay in the environment's actions."""
-        original_step = env.step
-
-        def delayed_step(action):
-            if not hasattr(env, 'action_buffer'):
-                env.action_buffer = [action] * delay_steps
-            else:
-                env.action_buffer.append(action)
-                if len(env.action_buffer) > delay_steps:
-                    env.action_buffer.pop(0)
-            delayed_action = env.action_buffer[0]
-            return original_step(delayed_action)
-
-    env.step = delayed_step
-    return env
-    
-def noise_injection(env, noise_std=0.1, noise_type='observation'):
-
-    if noise_type == 'observation':
-        """Injects Gaussian noise into the environment's observations."""
-        original_step = env.step
-
-        def noisy_step(action):
-            obs, reward, terminated, truncated, info = original_step(action)
-            noisy_obs = obs + np.random.normal(0, noise_std, size=obs.shape)
-            return noisy_obs, reward, terminated, truncated, info
-
-    elif noise_type == 'action':
-        if env.action_space.__class__.__name__ != 'Discrete':
-            """Chooses random actions if with nois_std probability, otherwise takes the original action."""
-            original_step = env.step
-
-            def noisy_step(action):
-                if np.random.rand() < noise_std:
-                    action = env.action_space.sample()
-                return original_step(action)
-        else:
-            """Injects Gaussian noise into the environment's actions."""
-            original_step = env.step
-
-            def noisy_step(action):
-                noisy_action = action + np.random.normal(0, noise_std, size=action.shape)
-                return original_step(noisy_action)
-
-    env.step = noisy_step
-    return env

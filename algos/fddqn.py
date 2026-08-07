@@ -12,6 +12,17 @@ import wandb
 import gymnasium as gym
 import cv2
 
+SEED = 31
+np.random.seed(SEED)
+# 1. Set seeds for PyTorch (CPU and GPU)
+torch.manual_seed(SEED)
+torch.cuda.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
+
+# 2. Ensure deterministic behavior for CuDNN
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 class lower_DQN(nn.Module):
     def __init__(self, obs_dim, action_dim, goal_dim, device):
         super(lower_DQN, self).__init__()
@@ -62,18 +73,21 @@ class FDDQNAgent(nn.Module):
     def __init__(self, obs_dim, action_dim, hyperparams={}, device="cpu"):
         super(FDDQNAgent, self).__init__()
 
-        self.lower_lr = hyperparams.get("lower_lr", 1e-3)
-        self.higher_lr = hyperparams.get("higher_lr", 1e-3)
+        self.lower_lr = hyperparams.get("lower_lr", 3e-4)
+        self.higher_lr = hyperparams.get("higher_lr", 3e-5)
         self.gamma_h = hyperparams.get("gamma_h", 0.999)
         self.gamma_l = hyperparams.get("gamma_l", 0.99)
         self.T = hyperparams.get("T", 10)
         self.goal_dim = hyperparams.get("goal_dim", 4)
         self.n_updates = hyperparams.get("n_updates", 10000)
         self.n_steps_per_update = hyperparams.get("n_steps_per_update", 40)
-        self.rl_wt = hyperparams.get("rl_wt", 0.4)
-        self.gl_wt = hyperparams.get("gl_wt", 0.8)
+        self.rl_wt = hyperparams.get("rl_wt", 0.7)
+        self.gl_wt = hyperparams.get("gl_wt", 0.9)
         self.action_eps = hyperparams.get("action_eps", 0.05)
         self.goal_eps = hyperparams.get("goal_eps", 0.1)
+
+        self.wandb_upload = hyperparams.get("wandb_upload", False)
+        self.save_model = hyperparams.get("save_model", False)
 
         self.obs_dim = obs_dim
         self.action_dim = action_dim
@@ -95,6 +109,12 @@ class FDDQNAgent(nn.Module):
 
         self.lower_optimizer = optim.Adam(list(self.lower_A.parameters()) + list(self.lower_B.parameters()), lr=self.alpha)
         self.higher_optimizer = optim.Adam(list(self.higher_A.parameters()) + list(self.higher_B.parameters()), lr=self.beta)
+
+        self.trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)   
+        self.total_params = sum(p.numel() for p in self.parameters())   
+
+        unique_params = {p.data_ptr(): p for p in self.parameters()}.values()
+        self.total_unique_params = sum(p.numel() for p in unique_params)   
 
 
     def select_goal(self, state):
@@ -208,8 +228,8 @@ class FDDQNAgent(nn.Module):
 
     def train_agent(self, env):
 
-        wandb_upload = True
-        save_weights = True
+        wandb_upload = self.wandb_upload
+        save_weights = self.save_model
         model_dir = f"Weights/lunarlander_FeudalDQN_weights/1k_updates_T_{self.T}_goalDim_{self.goal_dim}_lowerLR_{self.lower_lr}_higherLR_{self.higher_lr}"
 
         torch.autograd.set_detect_anomaly(True)
@@ -243,8 +263,13 @@ class FDDQNAgent(nn.Module):
                     "gl_wt": self.gl_wt,
                     "action_eps": self.action_eps,
                     "goal_eps": self.goal_eps,
+                    "model_dir": model_dir,
+                    "trainable_params": self.trainable_params,
+                    "total_params": self.total_params,
+                    "total_unique_params": self.total_unique_params,
                 },
             )
+            run.name = f"{env_name}_lowerLR_{self.lower_lr:.4f}_higherLR_{self.higher_lr:.5f}_rl_wt_{self.rl_wt:.2f}_gl_wt_{self.gl_wt:.2f}"
 
 
         ep_rewards = [0]
@@ -360,7 +385,7 @@ class FDDQNAgent(nn.Module):
 
     def test_agent(self, env, n_episodes=1):
 
-        wandb_upload = True
+        wandb_upload = self.wandb_upload
 
         env_name = env.spec.id
         obs_shape = env.observation_space.shape[0]
