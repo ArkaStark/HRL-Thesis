@@ -24,19 +24,21 @@ torch.backends.cudnn.benchmark = False
 
 class A2CAgent(nn.Module):
 
-    def __init__(self, n_features, n_actions, hyperparams={}, device="cpu"):
+    def __init__(self, n_features, n_actions, percept=False, device="cpu", hyperparams={}):
         """Initializes the actor and critic networks and their respective optimizers."""
         super().__init__()
 
-        self.n_updates = hyperparams.get("N_UPDATES", 2000)
+        # self.n_updates = hyperparams.get("N_UPDATES", 10000)
+        self.max_env_steps = hyperparams.get("MAX_ENV_STEPS", 1e6)
         self.n_steps_per_update = hyperparams.get("N_STEPS_PER_UPDATE", 100)
+        self.n_updates = int(self.max_env_steps / self.n_steps_per_update)
 
         # agent hyperparams
         self.gamma = hyperparams.get("GAMMA", 0.99)
         self.lam = hyperparams.get("LAM", 0.95)  # hyperparameter for GAE
         self.ent_coef = hyperparams.get("ENT_COEF", 0.01)  # coefficient for the entropy bonus (to encourage exploration)
-        self.actor_lr = hyperparams.get("ACTOR_LR", 0.003)
-        self.critic_lr = hyperparams.get("CRITIC_LR", 0.003)
+        self.actor_lr = hyperparams.get("LR_ACTOR", 0.001)
+        self.critic_lr = hyperparams.get("LR_CRITIC", 0.005)
 
         self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
         self.save_model = hyperparams.get("SAVE_MODEL", False)
@@ -168,15 +170,9 @@ class A2CAgent(nn.Module):
             print("Continuous action space detected. A2C is not suitable for continuous action spaces.")
             # return
 
-        actor_weights_path = f"Weights/{env_name}_A2C_weights/actor_weights_{self.n_updates}_alr{self.actor_lr}_ent{self.ent_coef}.pt"
-        critic_weights_path = f"Weights/{env_name}_A2C_weights/critic_weights_{self.n_updates}_clr{self.critic_lr}_ent{self.ent_coef}.pt"
+        model_path = f"Weights/{env_name}_A2C_weights/{self.n_updates}_alr{self.actor_lr}_ent{self.ent_coef}"
 
-        os.makedirs(f"Weights/{env_name}_A2C_weights", exist_ok=True)
-
-        """ save network weights """
-        if self.save_model:
-            torch.save(self.actor.state_dict(), actor_weights_path)
-            torch.save(self.critic.state_dict(), critic_weights_path)
+        os.makedirs(model_path, exist_ok=True)
 
         if self.wandb_upload:
             # Start a new wandb run to track this script.
@@ -196,8 +192,7 @@ class A2CAgent(nn.Module):
                     "ent_coef": self.ent_coef,
                     "actor_lr": self.actor_lr,
                     "critic_lr": self.critic_lr,
-                    "actor_weights_path": actor_weights_path,
-                    "critic_weights_path": critic_weights_path,
+                    "model_path": model_path,
                     "trainable_params": self.trainable_params,
                     "total_params": self.total_params,
                     "total_unique_params": self.total_unique_params
@@ -228,7 +223,7 @@ class A2CAgent(nn.Module):
 
             # at the start of training reset all envs to get an initial state
             if sample_phase == 0:
-                states, info = env.reset(seed=42)
+                states, info = env.reset(seed=SEED)
 
             # play n steps in our parallel environments to collect data
             for step in range(self.n_steps_per_update):
@@ -265,7 +260,7 @@ class A2CAgent(nn.Module):
                     if self.wandb_upload:
                         wandb.log(
                             {
-                                "episode_return": episode_return,
+                                "episode_reward": episode_return,
                                 "episode_length": episode_length,
                             }
                         )
@@ -278,7 +273,7 @@ class A2CAgent(nn.Module):
                                     "mean_episode_return": np.mean(episode_returns[-10:])
                                 }
                             )
-                    states, info = env.reset()
+                    states, info = env.reset(seed=SEED+sample_phase)
                     episode_return = 0
                     episode_length = 0
 
@@ -314,29 +309,35 @@ class A2CAgent(nn.Module):
             # actor_losses.append(actor_loss.detach().cpu().numpy())
             # entropies.append(ep_entropies.detach().mean().cpu().numpy())
 
+            """ save network weights """
+            if self.save_model and (sample_phase + 1) % 100 == 0:
+                torch.save(self.actor.state_dict(), f"{model_path}/actor.pt")
+                torch.save(self.critic.state_dict(), f"{model_path}/critic.pt")
+
         if self.wandb_upload:
             run.finish()
 
-    def test_agent(self, env, n_episodes=1):
+    def test_agent(self, env, n_episodes=1, record_stats=False, model_path=None):
 
         env_name = env.spec.id
 
-        actor_weights_path = f"Weights/{env_name}_A2C_weights/actor_weights_{self.n_updates}_alr{self.actor_lr}_ent{self.ent_coef}.pt"
-        critic_weights_path = f"Weights/{env_name}_A2C_weights/critic_weights_{self.n_updates}_clr{self.critic_lr}_ent{self.ent_coef}.pt"
+        if model_path is None:
+            model_path = f"Weights/{env_name}_A2C_weights/{self.n_updates}_alr{self.actor_lr}_ent{self.ent_coef}"
 
         """ load network weights """
-        if self.load_model:
-            # agent = A2C(obs_shape, action_shape, device, critic_lr, actor_lr, n_envs)
 
-            self.actor.load_state_dict(torch.load(actor_weights_path))
-            self.critic.load_state_dict(torch.load(critic_weights_path))
-            self.actor.eval()
-            self.critic.eval()
+        self.actor.load_state_dict(torch.load(f"{model_path}/actor.pt"))
+        self.critic.load_state_dict(torch.load(f"{model_path}/critic.pt"))
+        self.actor.eval()
+        self.critic.eval()
+
+        if record_stats:
+            episode_rewards = []
+            episode_lengths = []
 
         """ play a couple of showcase episodes """
 
         for episode in range(n_episodes):
-            print(f"starting episode {episode}...")
 
             if self.wandb_upload:
                 run = wandb.init(
@@ -359,7 +360,9 @@ class A2CAgent(nn.Module):
                 )
 
             # get an initial state
-            state, info = env.reset()
+            state, info = env.reset(seed=SEED + episode)
+            ep_reward = 0
+            ep_length = 0
 
             # play one episode
             done = False
@@ -374,6 +377,8 @@ class A2CAgent(nn.Module):
 
                 # update if the environment is done
                 done = terminated or truncated
+                ep_reward += reward
+                ep_length += 1
 
                 frame = env.render()
                 if frame is not None:
@@ -397,6 +402,16 @@ class A2CAgent(nn.Module):
                     video = np.stack(renders, axis=0)
                     video = np.transpose(video, (0, 3, 1, 2))
                     wandb.log({"showcase_video": wandb.Video(video, fps=8, format="mp4")})
+
+            if record_stats:
+                episode_rewards.append(ep_reward)
+                episode_lengths.append(ep_length)
+
+            print(f"Episode {episode + 1}/{n_episodes}: Reward = {ep_reward}, Length = {ep_length}")
+
+
             wandb.finish()
 
         env.close()
+
+        return episode_rewards, episode_lengths

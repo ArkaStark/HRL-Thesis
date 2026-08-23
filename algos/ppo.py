@@ -11,6 +11,7 @@ from torch import device, optim
 from torch.distributions.normal import Normal
 
 import wandb
+import cv2
 
 SEED = 31
 np.random.seed(SEED)
@@ -23,11 +24,11 @@ torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
     
-class PPO(nn.Module):
+class PPOAgent(nn.Module):
     """Proximal Policy Optimization with Advantage Actor-Critic algorithm."""
 
     def __init__(
-        self, n_features, n_actions, hyperparams={}, device="cpu", n_envs=1
+        self, n_features, n_actions, percept=False, device="cpu", hyperparams={}, n_envs=1
     ) -> None:
         """Initializes the actor and critic networks and their respective optimizers."""
         super().__init__()
@@ -35,18 +36,23 @@ class PPO(nn.Module):
         self.n_envs = n_envs # for parallel environments
 
         # hyperparameters
-        self.n_updates = hyperparams.get("N_UPDATES", 1000)
+        self.max_env_steps = hyperparams.get("MAX_ENV_STEPS", 1e6)
         self.n_steps_per_update = hyperparams.get("N_STEPS_PER_UPDATE", 400)
         self.ppo_epochs = hyperparams.get("PPO_EPOCHS", 4)
         self.gamma = hyperparams.get("GAMMA", 0.99)
         self.ent_coef = hyperparams.get("ENT_COEF", 0.001)
-        self.critic_lr = hyperparams.get("CRITIC_LR", 0.0001)
-        self.actor_lr = hyperparams.get("ACTOR_LR", 0.00001)
+        self.critic_lr = hyperparams.get("LR_CRITIC", 0.0001)
+        self.actor_lr = hyperparams.get("LR_ACTOR", 0.00001)
         self.lam = hyperparams.get("LAM", 0.95)
         self.eps = hyperparams.get("EPS", 1e-6)
 
-        self.wandb_upload = hyperparams.get("WANDB_UPLOAD", True)
-        self.save_weights = hyperparams.get("SAVE_WEIGHTS", True)
+        self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
+        self.save_model = hyperparams.get("SAVE_MODEL", False)
+
+        self.n_updates = int(self.max_env_steps / (self.n_steps_per_update * self.n_envs))
+
+        self.obs_shape = n_features
+        self.action_shape = n_actions
 
         critic_layers = [
             nn.Linear(n_features, 256),
@@ -234,10 +240,14 @@ class PPO(nn.Module):
         nn.utils.clip_grad_norm_(self.critic.parameters(), max_norm=0.5)  # clip gradients to prevent exploding gradients
         self.critic_optim.step()
 
-    def train_agent(self, env, save_stats=False):
+    def train_agent(self, env, store_episode_rewards=False):
 
         env_name = env.spec.id
-        model_path = "Weights/bipedalwalker_weights/bipedal_PPO_10env_10000_steps_best"
+        model_path = None
+
+        if self.save_model:
+            model_path = f"Weights/{env_name}_PPOWeights/{self.n_updates}_{self.actor_lr}_{self.critic_lr}_{self.ent_coef}"
+            os.makedirs(model_path, exist_ok=True)
 
         if self.wandb_upload:
             # Start a new wandb run to track this script.
@@ -245,7 +255,7 @@ class PPO(nn.Module):
                 # Set the wandb entity where your project will be logged (generally your team name).
                 entity="arkapatra31-ust",
                 # Set the wandb project where this run will be logged.
-                project="PPO",
+                project="PPO-Train",
                 # Track hyperparameters and run metadata.
                 config={
                     "env": env_name,
@@ -265,6 +275,7 @@ class PPO(nn.Module):
                     "total_unique_params": self.total_unique_params,
                 },
             )
+            run.name = f"{env_name}_{self.actor_lr}_{self.critic_lr}_{self.ent_coef}"
 
         # # create a wrapper environment to save episode returns and episode lengths
         # envs_wrapper = gym.wrappers.vector.RecordEpisodeStatistics(
@@ -281,7 +292,7 @@ class PPO(nn.Module):
         ep_length = 0
         env_steps = 0
 
-        for sample_phase in tqdm(range(self.n_updates)):
+        for epoch in tqdm(range(self.n_updates)):
             # we don't have to reset the envs, they just continue playing
             # until the episode is over and then reset automatically
 
@@ -294,7 +305,7 @@ class PPO(nn.Module):
             masks = torch.zeros(self.n_steps_per_update, self.n_envs, device=self.device)
 
             # at the start of training reset all envs to get an initial state
-            if sample_phase == 0:
+            if epoch == 0:
                 states, info = env.reset(seed=SEED)
 
             # play n steps in our parallel environments to collect data
@@ -323,14 +334,24 @@ class PPO(nn.Module):
 
                 # add a mask (for the return calculation later);
                 # for each env the mask is 1 if the episode is ongoing and 0 if it is terminated (not by truncation!)
-                masks[step] = torch.as_tensor([not term for term in terminated], dtype=torch.float32, device=self.device)
+                if self.n_envs > 1:
+                    masks[step] = torch.as_tensor(
+                        [not term for term in terminated], dtype=torch.float32, device=self.device
+                    )
+                else:
+                    masks[step] = torch.as_tensor(
+                        [not done], dtype=torch.float32, device=self.device
+                    )
 
                 if done:
-                    env.reset(seed=SEED)
+                    env.reset(seed=SEED+epoch)
                     if self.wandb_upload:
-                        wandb.log({"episode_rewards": ep_reward.mean().item(),
+                        wandb.log({"episode_rewards": ep_reward, #.mean().item(),
                                    "episode_length": ep_length
                         })
+                    if store_episode_rewards:
+                        ep_rewards.append(ep_reward.mean().item())
+                        ep_lengths.append(ep_length)
                     ep_reward = 0
                     ep_length = 0
 
@@ -352,7 +373,7 @@ class PPO(nn.Module):
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)  # normalize advantages
 
             # Compute losses and update networks
-            for epoch in range(self.ppo_epochs):
+            for ppo_update in range(self.ppo_epochs):
                 new_log_probs, new_value_preds, entropy = self.evaluate_actions(old_states, old_actions)
                 actor_loss, critic_loss = self.get_losses(
                     returns,
@@ -376,31 +397,102 @@ class PPO(nn.Module):
                         "entropy": entropy.mean().item(),
                     })
 
+            if self.save_model and (epoch + 1) % 100 == 0:
+                torch.save(self.state_dict(), f"{model_path}/model.pt")
+
+            if len(ep_rewards)>10:
+                mean_reward = np.mean(ep_rewards[-10:])
+                if self.wandb_upload:
+                    run.log({"avg_reward_last_10": mean_reward})
+
         if self.wandb_upload:
             run.finish()
 
-        if not os.path.exists(model_path):
-            os.makedirs(model_path)
-
-        """ save network weights """
-        if self.save_weights:
-            torch.save(self.state_dict(), f"{model_path}/ppo_weights.pth")
+        env.close()
 
 
-    def test_agent(self, env, n_episodes=1):
+    def test_agent(self, env, n_episodes=1, record_stats=False, model_path=None):
         
         env_name = env.spec.id
-        model_path = "Weights/bipedalwalker_weights/bipedal_PPO_10env_10000_steps_best"
-        self.load_state_dict(torch.load(f"{model_path}/ppo_weights.pth"))
 
-        # Test the trained agent
+        if model_path is None:
+            model_path = f"Weights/{env_name}_PPOWeights/{self.n_updates}_{self.actor_lr}_{self.critic_lr}_{self.ent_coef}"
+        self.load_state_dict(torch.load(f"{model_path}/model.pt"))
 
-        for i in range(n_episodes):
-            obs, info = env.reset()
+        if record_stats:
+            episode_rewards = []
+            episode_lengths = []
+
+        """ play a couple of showcase episodes """
+
+        for episode in range(n_episodes):
+
+            if self.wandb_upload:
+                run = wandb.init(
+                    # Set the wandb entity where your project will be logged (generally your team name).
+                    entity="arkapatra31-ust",
+                    # Set the wandb project where this run will be logged.
+                    project="PPO-Test",
+                    # Track hyperparameters and run metadata.
+                    config={
+                        "env": env_name,
+                        "algo": "PPO",
+                        "model_path": model_path,
+                    },
+                )
+
+            # get an initial state
+            state, info = env.reset(seed=SEED+episode)
+            ep_reward = 0
+            ep_length = 0
+
+            # play one episode
             done = False
+            renders = []
             while not done:
-                action, _, _, _ = self.select_action(obs, add_noise=False)
-                # action = test_env.action_space.sample()
-                obs, reward, terminated, truncated, info = env.step(action.cpu().numpy())
+                # select an action A_{t} using S_{t} as input for the agent
+                with torch.no_grad():
+                    action, _, _, _ = self.select_action(state)
+
+                # perform the action A_{t} in the environment to get S_{t+1} and R_{t+1}
+                state, reward, terminated, truncated, info = env.step(action.cpu().numpy())
+
+                # update if the environment is done
                 done = terminated or truncated
-            env.close()
+                ep_reward += reward
+                ep_length += 1
+
+                frame = env.render()
+                if frame is not None:
+                    # W&B handles videos best when frames are uint8 CHW tensors.
+                    if frame.shape[-1] == 4:
+                        frame = frame[:, :, :3]
+                    frame = np.asarray(frame, dtype=np.uint8)
+                    renders.append(frame)
+                # cv2.imshow("LunarLander", env.render())
+                # cv2.waitKey(1)
+                if self.wandb_upload:
+                    wandb.log({"reward": reward,
+                               "action": action.cpu().numpy(),
+                            })
+            if self.wandb_upload:
+                if renders:
+                    renders = [
+                        cv2.resize(render, (500, 500), interpolation=cv2.INTER_AREA)
+                        for render in renders
+                    ]
+                    video = np.stack(renders, axis=0)
+                    video = np.transpose(video, (0, 3, 1, 2))
+                    wandb.log({"showcase_video": wandb.Video(video, fps=8, format="mp4")})
+
+            if record_stats:
+                episode_rewards.append(ep_reward)
+                episode_lengths.append(ep_length)
+
+            print(f"Episode {episode + 1}/{n_episodes}: Reward = {ep_reward}, Length = {ep_length}")
+
+
+            wandb.finish()
+
+        if record_stats:
+            return episode_rewards, episode_lengths

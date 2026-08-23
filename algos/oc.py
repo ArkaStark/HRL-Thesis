@@ -75,7 +75,7 @@ class OCAgent(nn.Module):
         self.EPSILON_START = hyperparams.get("EPSILON_START", 1.0)
         self.EPSILON_MIN = hyperparams.get("EPSILON_MIN", 0.1)
         self.EPSILON_DECAY = hyperparams.get("EPSILON_DECAY", 0.995)
-        self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 1000)
+        self.MAX_ENV_STEPS = hyperparams.get("MAX_ENV_STEPS", 1e6)
         self.TERM_REG = hyperparams.get("TERM_REG", 0.001)
         
         self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
@@ -154,7 +154,7 @@ class OCAgent(nn.Module):
 
         env_name = env.spec.id
 
-        model_path = f"Weights/{env_name}_OC/model_{self.MAX_EPISODES}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}_x.pt"
+        model_path = f"Weights/{env_name}_OC/model_{self.MAX_ENV_STEPS}steps__nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}_xx.pt"
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
         if self.wandb_upload:
@@ -175,7 +175,7 @@ class OCAgent(nn.Module):
                     "epsilon_start": self.EPSILON_START,
                     "epsilon_min": self.EPSILON_MIN,
                     "epsilon_decay": self.EPSILON_DECAY,
-                    "max_episodes": self.MAX_EPISODES,
+                    "max_env_steps": self.MAX_ENV_STEPS,
                     "termination_regularization": self.TERM_REG,
                     "model_path": model_path,
                     "trainable_params": self.trainable_params,
@@ -189,137 +189,142 @@ class OCAgent(nn.Module):
         reward_history = []
         env_steps = 0
 
-        for episode in tqdm(range(self.MAX_EPISODES)):
+        with tqdm(total=self.MAX_ENV_STEPS, desc="Training Progress") as pbar:
+            while env_steps < self.MAX_ENV_STEPS:
 
-            state, _ = env.reset(seed=SEED + episode)  # Ensure reproducibility by varying the seed per episode
-            state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
-            
-            episode_reward = 0
-            episode_len = 0
-            curr_op_len = 0
-            done = False
-            
-            # Initial option selection (epsilon-greedy)
-            q_vals, _, _ = self.forward(state)
-            if np.random.rand() < epsilon:
-                current_option = np.random.randint(self.NUM_OPTIONS)
-            else:
-                current_option = q_vals.argmax(dim=1).item()
-
-            while not done:
-                # 1. Select action from the current option's intra-option policy
-                action, log_prob, entropy = self.get_action_and_log_prob(state, current_option)
+                state, _ = env.reset(seed=SEED + env_steps)  # Ensure reproducibility by varying the seed per episode
+                state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
                 
-                # 2. Step the environment
-                next_state_np, reward, terminated, truncated, _ = env.step(action)
-                done = terminated or truncated
-                next_state = torch.FloatTensor(next_state_np).unsqueeze(0).to(self.device)
-                episode_reward += reward
-                episode_len += 1
-                env_steps += 1
-                curr_op_len += 1
-
-                if self.wandb_upload:
-                    wandb.log({"env_steps": env_steps})
+                episode_reward = 0
+                episode_len = 0
+                curr_op_len = 0
+                done = False
                 
-                # 3. Calculate Option-Critic Targets and Losses
-                next_q_vals, _, next_term_probs = self.forward(next_state)
-                
-                # Did the current option terminate in the next state?
-                term_prob_next = next_term_probs[0, current_option]
-                
-                # Value of the next state: U(s', omega)
-                # If it terminates, we can pick the best next option. If not, we stick with the current.
-                best_next_q = next_q_vals.max(dim=1)[0]
-                current_next_q = next_q_vals[0, current_option]
-                
-                # Target for Q-value (TD Target)
-                if done:
-                    td_target = torch.tensor([reward], dtype=torch.float32).to(self.device)
+                # Initial option selection (epsilon-greedy)
+                q_vals, _, _ = self.forward(state)
+                if np.random.rand() < epsilon:
+                    current_option = np.random.randint(self.NUM_OPTIONS)
                 else:
-                    U_next = (1 - term_prob_next) * current_next_q + term_prob_next * best_next_q
-                    td_target = reward + self.GAMMA * U_next
+                    current_option = q_vals.argmax(dim=1).item()
 
-                # Critic Loss (MSE)
-                q_vals, policy_logits, term_probs = self.forward(state)
-                q_val = q_vals[0, current_option]
-                critic_loss = (td_target.detach() - q_val) ** 2
-                
-                # Actor Loss (Policy Gradient with Advantage)
-                advantage = td_target.detach() - q_val.detach()
-                actor_loss = -log_prob * advantage - (self.ENTROPY_WEIGHT * entropy)
-                
-                # Termination Loss
-                # We want to increase termination probability if the current option's Q-value 
-                # is worse than the best available option's Q-value.
-                termination_loss = term_probs[0, current_option] * (q_val.detach() - next_q_vals.max(dim=1)[0].detach() + self.TERM_REG)
+                while not done:
+                    # 1. Select action from the current option's intra-option policy
+                    action, log_prob, entropy = self.get_action_and_log_prob(state, current_option)
+                    
+                    # 2. Step the environment
+                    next_state_np, reward, terminated, truncated, _ = env.step(action)
+                    done = terminated or truncated
+                    next_state = torch.FloatTensor(next_state_np).unsqueeze(0).to(self.device)
+                    episode_reward += reward
+                    episode_len += 1
+                    env_steps += 1
+                    curr_op_len += 1
 
-                # 4. Backpropagation
-                total_loss = critic_loss + actor_loss + termination_loss
-                
-                self.optimizer.zero_grad()
-                total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
-                self.optimizer.step()
-                
-                # 5. Roll over state and check for option termination
-                state = next_state
+                    if self.wandb_upload:
+                        wandb.log({"env_steps": env_steps})
+                    
+                    # 3. Calculate Option-Critic Targets and Losses
+                    next_q_vals, _, next_term_probs = self.forward(next_state)
+                    
+                    # Did the current option terminate in the next state?
+                    term_prob_next = next_term_probs[0, current_option]
+                    
+                    # Value of the next state: U(s', omega)
+                    # If it terminates, we can pick the best next option. If not, we stick with the current.
+                    best_next_q = next_q_vals.max(dim=1)[0]
+                    current_next_q = next_q_vals[0, current_option]
+                    
+                    # Target for Q-value (TD Target)
+                    if done:
+                        td_target = torch.tensor([reward], dtype=torch.float32).to(self.device)
+                    else:
+                        U_next = (1 - term_prob_next) * current_next_q + term_prob_next * best_next_q
+                        td_target = reward + self.GAMMA * U_next
 
+                    # Critic Loss (MSE)
+                    q_vals, policy_logits, term_probs = self.forward(state)
+                    q_val = q_vals[0, current_option]
+                    critic_loss = (td_target.detach() - q_val) ** 2
+                    
+                    # Actor Loss (Policy Gradient with Advantage)
+                    advantage = td_target.detach() - q_val.detach()
+                    actor_loss = -log_prob * advantage - (self.ENTROPY_WEIGHT * entropy)
+                    
+                    # Termination Loss
+                    # We want to increase termination probability if the current option's Q-value 
+                    # is worse than the best available option's Q-value.
+                    termination_loss = term_probs[0, current_option] * (q_val.detach() - next_q_vals.max(dim=1)[0].detach() + self.TERM_REG)
+
+                    # 4. Backpropagation
+                    total_loss = critic_loss + actor_loss + termination_loss
+                    
+                    self.optimizer.zero_grad()
+                    total_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
+                    self.optimizer.step()
+                    
+                    # 5. Roll over state and check for option termination
+                    state = next_state
+
+                    if self.wandb_upload:
+                        wandb.log({
+                            "epsilon": epsilon,
+                            "current_option": current_option,
+                            "critic_loss": critic_loss.item(),
+                            "actor_loss": actor_loss.item(),
+                            "termination_loss": termination_loss.item(),
+                            "term_prob_next": term_prob_next.item(),
+                            "curr_op_len": curr_op_len
+                        })
+                    
+                    if not done:
+                        # Sample termination to decide if we need to switch options
+                        term_dist = Bernoulli(probs=term_prob_next.detach())
+                        if term_dist.sample().item() == 1.0:
+                            # Option terminated, pick a new one (epsilon-greedy)
+                            curr_op_len = 0
+                            if np.random.rand() < epsilon:
+                                current_option = np.random.randint(self.NUM_OPTIONS)
+                            else:
+                                current_option = next_q_vals.argmax(dim=1).item()
+
+                    if self.save_model and env_steps % 100000 == 0:  
+                        torch.save(self.state_dict(), model_path)
+
+                # Decay epsilon
+                epsilon = max(self.EPSILON_MIN, epsilon * self.EPSILON_DECAY)
                 if self.wandb_upload:
                     wandb.log({
-                        "epsilon": epsilon,
-                        "current_option": current_option,
-                        "critic_loss": critic_loss.item(),
-                        "actor_loss": actor_loss.item(),
-                        "termination_loss": termination_loss.item(),
-                        "term_prob_next": term_prob_next.item(),
-                        "curr_op_len": curr_op_len
+                        "episode_reward": episode_reward,
+                        "episode_len": episode_len,
+                        "epsilon": epsilon
                     })
-                
-                if not done:
-                    # Sample termination to decide if we need to switch options
-                    term_dist = Bernoulli(probs=term_prob_next.detach())
-                    if term_dist.sample().item() == 1.0:
-                        # Option terminated, pick a new one (epsilon-greedy)
-                        curr_op_len = 0
-                        if np.random.rand() < epsilon:
-                            current_option = np.random.randint(self.NUM_OPTIONS)
-                        else:
-                            current_option = next_q_vals.argmax(dim=1).item()
 
-            # Decay epsilon
-            epsilon = max(self.EPSILON_MIN, epsilon * self.EPSILON_DECAY)
-            if self.wandb_upload:
-                wandb.log({
-                    "episode_reward": episode_reward,
-                    "episode_len": episode_len,
-                    "epsilon": epsilon
-                })
+                    # print(f"Model saved to {model_path}")
 
-            if store_episode_rewards:
-                reward_history.append(episode_reward)
-                if self.wandb_upload and len(reward_history) > 10:
-                    wandb.log({"average_reward_last_10": np.mean(reward_history[-10:])})
+                if store_episode_rewards:
+                    reward_history.append(episode_reward)
+                    if self.wandb_upload and len(reward_history) > 10:
+                        wandb.log({"average_reward_last_10": np.mean(reward_history[-10:])})
 
-        if self.save_model:  
-            torch.save(self.state_dict(), model_path)
-            print(f"Model saved to {model_path}")
+                pbar.update(episode_len)
 
         if self.wandb_upload:
             wandb.finish()
 
         env.close()
 
-    def test_agent(self, env, n_episodes=1, record_stats=False):
+    def test_agent(self, env, n_episodes=1, record_stats=False, model_path=None):
 
         env_name = env.spec.id
 
-        # model_path = f"Weights/{env_name}_OC/model_{self.MAX_EPISODES}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}_x.pt"
-        model_path = "Weights/MiniGrid-FourRooms-v0_OC/model_2000_nOpt_4_LR_0.0003_TermReg_0.005_x.pt"
+        if model_path is None:
+            # model_path = f"Weights/{env_name}_OC/model_{self.MAX_EPISODES}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}_x.pt"
+            model_path = "Weights/MiniGrid-FourRooms-v0_OC/model_2000_nOpt_4_LR_0.0003_TermReg_0.005_x.pt"
+
         """ load network weights """
-        if self.load_model:
-            print(f"Loading model from {model_path}")
-            self.load_state_dict(torch.load(model_path))
+        # print(f"Loading model from {model_path}")
+        self.load_state_dict(torch.load(model_path))
 
         if record_stats:
             episode_rewards = []
@@ -340,20 +345,12 @@ class OCAgent(nn.Module):
                     config={
                         "env": env_name,
                         "num_options": self.NUM_OPTIONS,
-                        "learning_rate": self.LR,
-                        "gamma": self.GAMMA,
-                        "entropy_weight": self.ENTROPY_WEIGHT,
-                        "epsilon_start": self.EPSILON_START,
-                        "epsilon_min": self.EPSILON_MIN,
-                        "epsilon_decay": self.EPSILON_DECAY,
-                        "max_episodes": self.MAX_EPISODES,
-                        "termination_regularization": self.TERM_REG,
                         "model_path": model_path,
                     },
                 )
                 # run.name = f"{env_name}_{episode + 1}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.6f}_TermReg_{self.TERM_REG:.3f}"
 
-            state, _ = env.reset()
+            state, _ = env.reset(seed=SEED + episode)  # Ensure reproducibility by varying the seed per episode
             state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             
             episode_reward = 0

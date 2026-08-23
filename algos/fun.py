@@ -197,13 +197,15 @@ class FuNAgent(nn.Module):
         self.c = hyperparams.get("SUBGOAL_HORIZON", 10) # Prediction horizon for the manager
         self.gamma_M = hyperparams.get("GAMMA_M", 0.99)
         self.gamma_W = hyperparams.get("GAMMA_W", 0.95)
-        self.alpha = hyperparams.get("ALPHA", 0.8)
+        self.alpha = hyperparams.get("ALPHA", 0.01)
         self.ent_coef = hyperparams.get("ENT_COEF", 0.001) # Entropy regularization coefficient
         self.lr = hyperparams.get("LR", 3e-4)
         self.b = hyperparams.get("BATCH_SIZE", 1) # Batch size for training
 
-        self.n_updates = hyperparams.get("N_UPDATES", 2000)
+        # self.n_updates = hyperparams.get("N_UPDATES", 2000)
+        self.max_env_steps = hyperparams.get("MAX_ENV_STEPS", 1e6) # Maximum number of environment steps for training
         self.steps_per_update = hyperparams.get("STEPS_PER_UPDATE", 400) # reaches 98% of total possible return using sum of gp a/(1-gamma) for gamma=0.99
+        self.n_updates = int(self.max_env_steps / self.steps_per_update) # Number of updates for training
 
         self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
         self.save_model = hyperparams.get("SAVE_MODEL", False)
@@ -365,7 +367,7 @@ class FuNAgent(nn.Module):
             # adv_M = ret_M - value_M[t]
 
             # Generalized Advantage Estimation?
-            del_W = rewards[t] + alpha * rI[t] + gamma_W * (1 - dones[t]) * value_W[t + 1] - value_W[t]
+            del_W = alpha * rewards[t] + rI[t] + gamma_W * (1 - dones[t]) * value_W[t + 1] - value_W[t]
             adv_W = adv_W * gamma_W * lam * (1 - dones[t]) + del_W
             del_M = rewards[t] + gamma_M * (1 - dones[t]) * value_M[t + 1] - value_M[t]
             adv_M = adv_M * gamma_M * lam * (1 - dones[t]) + del_M
@@ -391,7 +393,7 @@ class FuNAgent(nn.Module):
 
         env_name = env.spec.id
 
-        model_path = f"Weights/{env_name}_fun/2kupdates_d{self.d}_k{self.k}_c{self.c}_lr_{self.lr:.4f}_ent_{self.ent_coef:.4f}"
+        model_path = f"Weights/{env_name}_fun/4kupdates_d{self.d}_k{self.k}_c{self.c}_lr_{self.lr:.4f}_ent_{self.ent_coef:.4f}"
         # model_path = "Weights/Pong-v5/fun_3k_updates_d256_k16_c10_lr_3e-4_ent_1e-3"
         os.makedirs(model_path, exist_ok=True)
 
@@ -426,8 +428,9 @@ class FuNAgent(nn.Module):
             )
             run.name = f"{env_name}_epochs_{self.n_updates}_lr_{self.lr:.4f}_ent_{self.ent_coef:.4f}"
     
-        # if self.load_model:
-        #     self.load_state_dict(torch.load("Weights/Pong-v5/fun_10k_updates_d256_k16_c10_lr_3e-4_ent_1e-3/model.pt", map_location=self.device))
+        self.load_model = False
+        if self.load_model:
+            self.load_state_dict(torch.load("Weights/LunarLander-v3_fun/2kupdates_d256_k16_c10_lr_0.0003_ent_0.0010/model.pt", map_location=self.device))
 
         # total_loss_history = []
         # critic_loss_history = []
@@ -448,8 +451,13 @@ class FuNAgent(nn.Module):
 
             states = self.reset_states_grad(states)
 
+            if self.percept:
+                obss = torch.zeros(self.steps_per_update, *self.state_dim, device=self.device)
+            else:
+                obss = torch.zeros(self.steps_per_update, self.state_dim, device=self.device)
+
             rewards = torch.zeros(self.steps_per_update, device=self.device)
-            obss = torch.zeros(self.steps_per_update, self.state_dim, device=self.device)
+            # obss = torch.zeros(self.steps_per_update, self.state_dim, device=self.device)
             dones = torch.zeros(self.steps_per_update, device=self.device)
             actions = torch.zeros(self.steps_per_update, device=self.device)
             log_probs = torch.zeros(self.steps_per_update, device=self.device)
@@ -495,7 +503,7 @@ class FuNAgent(nn.Module):
                 log_probs[t] = log_prob.squeeze(0)
                 entropies[t] = entropy.squeeze(0)
 
-                rewards[t] = reward/200 #scale reward?
+                rewards[t] = reward #scale reward?
                 # print(f"Reward received: {reward}, Normalized reward: {rewards[t].item()}")#, reward_threshold=env.spec.reward_threshold)
                 values_M[t] = value_M.squeeze(0)
                 values_W[t] = value_W.squeeze(0)
@@ -563,11 +571,12 @@ class FuNAgent(nn.Module):
         if self.wandb_upload:
             run.finish()
 
-    def test_agent(self, env, n_episodes=1, record_stats=False):
+    def test_agent(self, env, n_episodes=1, record_stats=False, model_path=None):
 
         env_name = env.spec.id
 
-        model_path = f"Weights/{env_name}_fun/2kupdates_d{self.d}_k{self.k}_c{self.c}_lr_{self.lr:.4f}_ent_{self.ent_coef:.4f}"
+        if model_path is None:
+            model_path = f"Weights/{env_name}_fun/4kupdates_d{self.d}_k{self.k}_c{self.c}_lr_{self.lr:.4f}_ent_{self.ent_coef:.4f}"
         self.load_state_dict(torch.load(f"{model_path}/model.pt", map_location=self.device))
 
         if record_stats:
@@ -603,7 +612,7 @@ class FuNAgent(nn.Module):
             
             self.eval()
 
-            obs, _ = env.reset()
+            obs, _ = env.reset(seed=SEED + episode)
             states = self.init_state()
             done = False
             t = 0

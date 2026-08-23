@@ -77,12 +77,13 @@ class ReplayBuffer:
         self.device = device
         self._shapes = None
 
-    def add(self, state, action, reward, next_state, done):
+    def add(self, state, action, reward, next_state, done, gamma):
         state = np.asarray(state, dtype=np.float32)
         action = np.asarray(action, dtype=np.float32)
         next_state = np.asarray(next_state, dtype=np.float32)
         reward = float(reward)
         done = float(done)
+        gamma = float(gamma)
 
         shapes = (state.shape, action.shape, next_state.shape)
         if self._shapes is None:
@@ -93,7 +94,7 @@ class ReplayBuffer:
                 f"expected state/action/next_state shapes {self._shapes}, got {shapes}"
             )
 
-        transition = (state, action, reward, next_state, done)
+        transition = (state, action, reward, next_state, done, gamma)
         if len(self.storage) == self.max_size:
             self.storage[int(self.ptr)] = transition
             self.ptr = (self.ptr + 1) % self.max_size
@@ -102,13 +103,14 @@ class ReplayBuffer:
 
     def sample(self, batch_size):
         batch = random.sample(self.storage, batch_size)
-        s, a, r, ns, d = zip(*batch)
+        s, a, r, ns, d, g = zip(*batch)
         return (
             torch.FloatTensor(np.stack(s)).to(self.device),
             torch.FloatTensor(np.stack(a)).to(self.device),
             torch.FloatTensor(np.asarray(r, dtype=np.float32)).unsqueeze(1).to(self.device),
             torch.FloatTensor(np.stack(ns)).to(self.device),
-            torch.FloatTensor(np.asarray(d, dtype=np.float32)).unsqueeze(1).to(self.device)
+            torch.FloatTensor(np.asarray(d, dtype=np.float32)).unsqueeze(1).to(self.device),
+            torch.FloatTensor(np.asarray(g, dtype=np.float32)).unsqueeze(1).to(self.device)
         )
 
     def __len__(self):
@@ -121,7 +123,6 @@ class TD3(nn.Module):
         # --- Hyperparameters ---
         self.LR_ACTOR = hyperparams.get("LR_ACTOR", 1e-4)
         self.LR_CRITIC = hyperparams.get("LR_CRITIC", 3e-4)
-        self.GAMMA = hyperparams.get("GAMMA", 0.99)            # Discount factor
         self.TAU = hyperparams.get("TAU", 0.005)             # Soft update parameter for target networks
         self.BATCH_SIZE = hyperparams.get("BATCH_SIZE", 64)         # Mini-batch size
         self.POLICY_NOISE = hyperparams.get("POLICY_NOISE", 0.2)      # Noise added to target policy during critic update
@@ -148,12 +149,12 @@ class TD3(nn.Module):
         with torch.no_grad():
             return self.actor(state).cpu().data.numpy().flatten()
 
-    def train(self, replay_buffer, gamma):
+    def train(self, replay_buffer):
         if len(replay_buffer) < self.BATCH_SIZE:
             return
 
         self.total_it += 1
-        state, action, reward, next_state, done = replay_buffer.sample(self.BATCH_SIZE)
+        state, action, reward, next_state, done, gamma = replay_buffer.sample(self.BATCH_SIZE)
 
         with torch.no_grad():
             noise = (torch.randn_like(action) * self.POLICY_NOISE).clamp(-self.NOISE_CLIP, self.NOISE_CLIP)
@@ -183,11 +184,11 @@ class TD3(nn.Module):
 
 # --- HAC Agent ---
 class HACAgent(nn.Module):
-    def __init__(self, state_dim, action_dim, hyperparams={}, device="cpu"):
+    def __init__(self, state_dim, action_dim, percept=False, device="cpu", hyperparams={}):
         super(HACAgent, self).__init__()
 
         # --- Hyperparameters ---
-        self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 2000)     # Maximum number of episodes to train
+        # self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 2000)     # Maximum number of episodes to train
         self.RANDOM_START_STEPS = hyperparams.get("RANDOM_START_STEPS", 1000)    # Number of random steps to populate the replay buffer before training
         self.MAX_ACTION = hyperparams.get("MAX_ACTION", 1.0)          # Maximum action value (for BipedalWalker, actions are bounded between -1 and 1)
         self.BUFFER_SIZE = hyperparams.get("BUFFER_SIZE", int(1e6))  # Replay buffer size
@@ -199,7 +200,8 @@ class HACAgent(nn.Module):
         self.SUBGOAL_TEST_FREQ = hyperparams.get("SUBGOAL_TEST_FREQ", 0.3)  # Frequency of testing subgoal achievement
         self.EXPL_NOISE_WORKER = hyperparams.get("EXPL_NOISE_WORKER", 0.2)  # Exploration noise for worker level
         self.EXPL_NOISE_MANAGER = hyperparams.get("EXPL_NOISE_MANAGER", 0.5)  # Exploration noise for manager level
-        self.SUBGOAL_BOUND = hyperparams.get("SUBGOAL_BOUND", 1.0)  # Bound for subgoal values
+        self.SUBGOAL_BOUND = hyperparams.get("GOAL_BOUND", 1.0)  # Bound for subgoal values
+        self.MAX_ENV_STEPS = hyperparams.get("MAX_ENV_STEPS", 1e6)  # Maximum number of environment steps to train
 
         self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)  # Whether to upload logs to Weights & Biases
         self.save_model = hyperparams.get("SAVE_MODEL", False)  # Whether to save the model weights after training
@@ -325,15 +327,17 @@ class HACAgent(nn.Module):
                 self.done = terminated or truncated
                 self.episode_reward += reward * (1-self.done)
                 self.env_steps += 1 * (1-self.done)
-                if self.wandb_upload:
-                    wandb.log({
-                        "env_steps": self.env_steps
-                    })
                 self.episode_length += 1 * (1-self.done)
                 self.achieved_gstate = info.get('achieved_goal', next_state)  # Use the achieved goal from the info dictionary if available, otherwise use the next state
                 for l in range(self.N_LEVELS):
                     if self.compute_her_reward(self.previous_gstate, goals[-1-l], self.achieved_gstate)==0:  # Check if any subgoals was achieved
                         self.highest_subgoal_achieved_level = max(self.highest_subgoal_achieved_level, l)
+
+                if self.wandb_upload:
+                    wandb.log({
+                        "env_steps": self.env_steps,
+                        "highest_subgoal_achieved_level": self.highest_subgoal_achieved_level,
+                    })
 
             new_goal = self.goal_transition(self.previous_gstate, goal, self.achieved_gstate)  # Compute the new goal for the next step based on the achieved goal
             lvl_input = np.concatenate([state, goal])
@@ -342,12 +346,12 @@ class HACAgent(nn.Module):
             if level>0 and self.compute_her_reward(self.previous_gstate, goal, self.achieved_gstate)==-1:  # Check if goal was missed
                 if subgoal_test:
                     penalty = -self.SUBGOAL_HORIZON  # HAC sec 4.5 penalty is -H
-                    self.replay_buffers[level].add(lvl_input, action, penalty, nxt_lvl_input, float(self.done)) # gamma=0 ?
+                    self.replay_buffers[level].add(lvl_input, action, penalty, nxt_lvl_input, float(self.done), 0) # gamma=0 ?
                 action = self.achieved_gstate - self.previous_gstate  # Replace with the subgoal actually achieved.
                     
             # HAC 4.3 Hindsight Action Transition
-            r_g = self.compute_her_reward(self.previous_gstate, goal, self.achieved_gstate) + self.ALPHA * self.episode_reward
-            self.replay_buffers[level].add(lvl_input, action, r_g, nxt_lvl_input, float(self.done))
+            r_g = self.compute_her_reward(self.previous_gstate, goal, self.achieved_gstate) + pow(self.ALPHA, self.N_LEVELS-1-level) * self.episode_reward
+            self.replay_buffers[level].add(lvl_input, action, r_g, nxt_lvl_input, float(self.done), self.GAMMA)
             # Store hindsight goal transition
             hindsight_goal_transitions.append((state, action, r_g, next_state, float(self.done), goal, self.previous_gstate, self.achieved_gstate))
             state = next_state
@@ -356,7 +360,6 @@ class HACAgent(nn.Module):
                 wandb.log(
                     {
                         f"level_{level}_reward": r_g,
-                        f"level_{level}_highest_subgoal_achieved_level": self.highest_subgoal_achieved_level,
                     }
                 )
             
@@ -371,10 +374,10 @@ class HACAgent(nn.Module):
             for gstate in gstates:
                 state, action, _, next_state, done, _, previous_gstate, achieved_gstate = hindsight_goal_transitions[t]
                 goal = gstate - previous_gstate # Compute the new goal based on the achieved state and the sampled future goal
-                r_g = self.compute_her_reward(previous_gstate, goal, achieved_gstate) + self.ALPHA * self.episode_reward
+                r_g = self.compute_her_reward(previous_gstate, goal, achieved_gstate) + pow(self.ALPHA, self.N_LEVELS-1-level) * self.episode_reward
                 lvl_input = np.concatenate([state, goal])
                 nxt_lvl_input = np.concatenate([next_state, goal])
-                self.replay_buffers[level].add(lvl_input, action, r_g, nxt_lvl_input, float(done))
+                self.replay_buffers[level].add(lvl_input, action, r_g, nxt_lvl_input, float(done), self.GAMMA)  
 
         return next_state
 
@@ -408,17 +411,18 @@ class HACAgent(nn.Module):
         
         return next_state
     
-    def train_agent(self, env):
+    def train_agent(self, env, store_episode_rewards=False):
 
         env_name = env.spec.id
+        model_path = None
 
         if env.action_space.__class__.__name__ == "Discrete":
             print("Discrete action space detected. DDPG is not suitable for discrete action spaces.")
             # return
 
-        model_path = f"Weights/{env_name}_HAC_weights/HAC_{env_name}_{self.MAX_EPISODES}.pt"
-
-        os.makedirs(f"Weights/{env_name}_HAC_weights", exist_ok=True)
+        if self.save_model:
+            model_path = f"Weights/{env_name}_HAC_weights/HAC_{env_name}_{self.MAX_ENV_STEPS}_{self.LR_ACTOR:.4f}_{self.LR_CRITIC:.4f}_{self.SUBGOAL_HORIZON}"
+            os.makedirs(model_path, exist_ok=True)
 
         if self.wandb_upload:
             # Start a new wandb run to track this script.
@@ -436,7 +440,7 @@ class HACAgent(nn.Module):
                     "gamma": self.GAMMA,
                     "tau": self.TAU,
                     "batch_size": self.BATCH_SIZE,
-                    "max_episodes": self.MAX_EPISODES,
+                    "max_env_steps": self.MAX_ENV_STEPS,
                     "policy_noise": self.POLICY_NOISE,
                     "noise_clip": self.NOISE_CLIP,
                     "policy_freq": self.POLICY_FREQ,
@@ -458,7 +462,7 @@ class HACAgent(nn.Module):
                     "model_path": model_path
                 },
             )
-            run.name = f"{env_name}_{self.MAX_EPISODES}_{self.LR_ACTOR:.4f}_{self.LR_CRITIC:.4f}_{self.SUBGOAL_HORIZON}"
+            run.name = f"{env_name}_{self.MAX_ENV_STEPS}_{self.LR_ACTOR:.4f}_{self.LR_CRITIC:.4f}_{self.SUBGOAL_HORIZON}"
 
         # create a wrapper environment to save episode returns and episode lengths
         # create a wrapper environment to save episode returns and episode lengths
@@ -477,54 +481,85 @@ class HACAgent(nn.Module):
         #         obs, _ = env.reset()
 
         self.env_steps = 0
+        episode_rewards = []
 
-        for episode in tqdm(range(self.MAX_EPISODES)):
-            obs, info = env.reset()
-            self.episode_reward = 0
-            self.episode_length = 0
-            self.done = False
-            while not self.done:
-                desired_gstate = info.get('desired_goal', env.observation_space.sample())  # Use the desired goal from the info dictionary if available, otherwise sample a random goal
-                achieved_gstate = info.get('achieved_goal', obs)  # Use the achieved goal from the info dictionary if available, otherwise use the current observation
-                goal = desired_gstate - achieved_gstate  # Compute the goal as the difference between the desired goal and the current observation
-                self.highest_subgoal_achieved_level = -1  # Reset the highest subgoal achieved level for this episode
-                next_obs = self.train_level(env, self.N_LEVELS-1, obs, info, [goal])  # Start training from the highest level
-                obs = next_obs
+        with tqdm(total=self.MAX_ENV_STEPS, desc="Training Progress") as pbar:
+            while self.env_steps < self.MAX_ENV_STEPS:
+                obs, info = env.reset()
+                self.episode_reward = 0
+                self.episode_length = 0
+                self.done = False
+                while not self.done:
+                    desired_gstate = info.get('desired_goal', env.observation_space.sample())  # Use the desired goal from the info dictionary if available, otherwise sample a random goal
+                    achieved_gstate = info.get('achieved_goal', obs)  # Use the achieved goal from the info dictionary if available, otherwise use the current observation
+                    goal = desired_gstate - achieved_gstate  # Compute the goal as the difference between the desired goal and the current observation
+                    self.highest_subgoal_achieved_level = -1  # Reset the highest subgoal achieved level for this episode
+                    next_obs = self.train_level(env, self.N_LEVELS-1, obs, info, [goal])  # Start training from the highest level
+                    obs = next_obs
 
-            if self.wandb_upload:
-                wandb.log({
-                    "episode_reward": self.episode_reward,
-                    "episode_length": self.episode_length,
-                })
+                if self.wandb_upload:
+                    wandb.log({
+                        "episode_reward": self.episode_reward,
+                        "episode_length": self.episode_length,
+                    })
 
-            # Update the agent after each episode
-            for i in range(self.NUM_UPDATES):
-                # self.ddpg_update()
-                for level in range(self.N_LEVELS):
-                    self.levels[level].train(self.replay_buffers[level], self.GAMMA)
+                if store_episode_rewards:
+                    episode_rewards.append(self.episode_reward)
+                    if len(episode_rewards) > 50:
+                        episode_rewards.pop(0)
+                    avg_reward = np.mean(episode_rewards)
+                    if self.wandb_upload:
+                        wandb.log({
+                            "avg_episode_reward_50": avg_reward,
+                        })
+
+                # Update the agent after each episode
+                for i in range(self.NUM_UPDATES):
+                    # self.ddpg_update()
+                    for level in range(self.N_LEVELS):
+                        self.levels[level].train(self.replay_buffers[level])
+
+                if self.save_model and self.env_steps > 500000:
+                    torch.save(self.state_dict(), f"{model_path}/model.pt")
+                    # print(f"Saved model weights at episode {episode + 1} to {model_path}")
+                
+                pbar.update(self.episode_length)
 
         if self.wandb_upload:
             run.finish()
 
-        """ save network weights """
-        if self.save_model:
-            torch.save(self.state_dict(), model_path)
-
-    def test_agent(self, env, n_episodes=1):
+    def test_agent(self, env, n_episodes=1, record_stats=False, model_path=None):
 
         env_name = env.spec.id
 
-        model_path = f"Weights/{env_name}_HAC_weights/HAC_{env_name}_{self.MAX_EPISODES}.pt"
+        if model_path is None:
+            model_path = f"Weights/{env_name}_HAC_weights/HAC_{env_name}_{self.MAX_ENV_STEPS}_{self.LR_ACTOR:.4f}_{self.LR_CRITIC:.4f}_{self.SUBGOAL_HORIZON}"
 
         if os.path.exists(model_path):
-            self.load_state_dict(torch.load(model_path, map_location=self.device))
+            self.load_state_dict(torch.load(f"{model_path}/model.pt", map_location=self.device))
         else:
             print("Weights not found. Please train the agent first.")
             return
 
+        if self.wandb_upload:
+            run = wandb.init(
+                entity="arkapatra31-ust",
+                project="HAC-Test",
+                config={
+                    "env": env_name,
+                    "architecture": "HAC",
+                    "model_path": model_path,
+                }
+            )
+            run.name = f"{env_name}_test_{n_episodes}_episodes"
+
+        if record_stats:
+            episode_rewards = []
+            episode_lengths = []
+
         for episode in range(n_episodes):
 
-            obs, info = env.reset()
+            obs, info = env.reset(seed=SEED + episode)
             self.done = False
             self.episode_reward = 0
             self.episode_length = 0
@@ -540,18 +575,29 @@ class HACAgent(nn.Module):
                 obs = next_obs
 
             if self.wandb_upload:
-                 if renders:
-                     renders = [
-                         cv2.resize(render, (500, 500), interpolation=cv2.INTER_AREA)
-                         for render in renders
-                     ]
-                     video = np.stack(renders, axis=0)
-                     video = np.transpose(video, (0, 3, 1, 2))
-                     wandb.log({"showcase_video": wandb.Video(video, fps=8, format="mp4")})
-                 wandb.finish()
+                wandb.log({
+                    "episode_reward": self.episode_reward,
+                    "episode_length": self.episode_length,
+                })
+                if renders:
+                    renders = [
+                        cv2.resize(render, (500, 500), interpolation=cv2.INTER_AREA)
+                        for render in renders
+                    ]
+                    video = np.stack(renders, axis=0)
+                    video = np.transpose(video, (0, 3, 1, 2))
+                    wandb.log({"showcase_video": wandb.Video(video, fps=8, format="mp4")})
+                wandb.finish()
+
+            if record_stats:
+                episode_rewards.append(self.episode_reward)
+                episode_lengths.append(self.episode_length)
             
             print(f"Episode {episode + 1}: Total Reward: {self.episode_reward}, Length: {self.episode_length}")
-        env.close()
+        wandb.finish()
+
+        if record_stats:
+            return episode_rewards, episode_lengths
 
     def ddpg_update(self):
 

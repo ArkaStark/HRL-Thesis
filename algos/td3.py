@@ -73,7 +73,7 @@ class ReplayBuffer:
 
 # --- TD3 Agent ---
 class TD3Agent(torch_nn.Module):
-    def __init__(self, state_dim, action_dim, hyperparams={}, device="cpu"):
+    def __init__(self, state_dim, action_dim, percept=False, device="cpu", hyperparams={}):
         super(TD3Agent, self).__init__()
         self.action_dim = action_dim
         self.state_dim = state_dim
@@ -84,15 +84,16 @@ class TD3Agent(torch_nn.Module):
         self.GAMMA = hyperparams.get("GAMMA", 0.99)            # Discount factor
         self.TAU = hyperparams.get("TAU", 0.005)             # Soft update parameter for target networks
         self.BATCH_SIZE = hyperparams.get("BATCH_SIZE", 64)         # Mini-batch size
-        self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 5000)     # Maximum number of episodes to train
+        # self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 5000)     # Maximum number of episodes to train
         self.EXPLORATION_NOISE = hyperparams.get("EXPLORATION_NOISE", 0.1) # Standard deviation of Gaussian noise for exploration
         self.RANDOM_START_STEPS = hyperparams.get("RANDOM_START_STEPS", 1000)    # Number of random steps to populate the replay buffer before training
         self.UPDATE_DELAY = hyperparams.get("UPDATE_DELAY", 2)          # Number of critic updates per actor update
         self.BUFFER_SIZE = hyperparams.get("BUFFER_SIZE", int(1e6))  # Replay buffer size
         self.MAX_ACTION = hyperparams.get("MAX_ACTION", 1.0)            # Maximum action value (for BipedalWalker, actions are bounded between -1 and 1)
+        self.MAX_ENV_STEPS = hyperparams.get("MAX_ENV_STEPS", 1e6)     # Maximum number of environment steps to train
 
-        self.wandb_upload = hyperparams.get("wandb_upload", False)
-        self.save_model = hyperparams.get("save_model", False)
+        self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
+        self.save_model = hyperparams.get("SAVE_MODEL", False)
             
 
         self.actor = Actor(state_dim, action_dim, self.MAX_ACTION).to(device)
@@ -153,7 +154,7 @@ class TD3Agent(torch_nn.Module):
             print("Discrete action space detected. TD3 is not suitable for discrete action spaces.")
             # return
 
-        model_path = f"Weights/{env_name}_TD3_{self.MAX_EPISODES}"
+        model_path = f"Weights/{env_name}_TD3_alr_{self.LR_ACTOR}_clr_{self.LR_CRITIC}_xx"
 
         os.makedirs(model_path, exist_ok=True)
 
@@ -173,7 +174,7 @@ class TD3Agent(torch_nn.Module):
                     "gamma": self.GAMMA,
                     "tau": self.TAU,
                     "batch_size": self.BATCH_SIZE,
-                    "max_episodes": self.MAX_EPISODES,
+                    "max_env_steps": self.MAX_ENV_STEPS,
                     "exploration_noise": self.EXPLORATION_NOISE,
                     "random_start_steps": self.RANDOM_START_STEPS,
                     "update_delay": self.UPDATE_DELAY,
@@ -185,6 +186,7 @@ class TD3Agent(torch_nn.Module):
                     "total_unique_params": self.total_unique_params,
                 },
             )
+            run.name = f"{env_name}_alr{self.LR_ACTOR}_clr{self.LR_CRITIC}"
 
             # create a wrapper environment to save episode returns and episode lengths
             # create a wrapper environment to save episode returns and episode lengths
@@ -212,128 +214,138 @@ class TD3Agent(torch_nn.Module):
         episode_returns = []
         episode_lengths = []
 
-        for episode in tqdm(range(self.MAX_EPISODES)):
-            obs, info = env.reset(seed=SEED)
-            episode_reward = 0
-            episode_length = 0
-            done = False
-            
-            while not done:
-                # Select action with noise for exploration
-                action = self.select_action(obs, noise_std=self.EXPLORATION_NOISE)
+        with tqdm(total=self.MAX_ENV_STEPS, desc="Training Progress") as pbar:
+
+            while env_steps < self.MAX_ENV_STEPS:
                 
-                # Step environment
-                next_obs, reward, terminated, truncated, _ = env.step(action)
-                done = terminated or truncated
+                obs, info = env.reset(seed=SEED+env_steps)
+                episode_reward = 0
+                episode_length = 0
+                done = False
                 
-                # Store experience
-                self.replay_buffer.add(obs, action, reward, next_obs, float(done))
+                while not done:
+                    # Select action with noise for exploration
+                    action = self.select_action(obs, noise_std=self.EXPLORATION_NOISE)
+                    
+                    # Step environment
+                    next_obs, reward, terminated, truncated, _ = env.step(action)
+                    done = terminated or truncated
+                    
+                    # Store experience
+                    self.replay_buffer.add(obs, action, reward, next_obs, float(done))
 
-                obs = next_obs
-                episode_reward += reward
-                episode_length += 1
-                if len(self.replay_buffer) > self.BATCH_SIZE:
-            
-                    # Sample a batch of transitions
-                    states, actions, rewards, next_states, dones = self.replay_buffer.sample(self.BATCH_SIZE)
-                    states = torch.FloatTensor(np.array(states)).to(self.device)
-                    actions = torch.FloatTensor(np.array(actions)).to(self.device)
-                    rewards = torch.FloatTensor(np.array(rewards)).unsqueeze(1).to(self.device)
-                    next_states = torch.FloatTensor(np.array(next_states)).to(self.device)
-                    dones = torch.FloatTensor(np.array(dones)).unsqueeze(1).to(self.device)
-
-                    # ------------------- Optimize Critic ------------------- #
-                    # Get predicted next-state actions and Q values from target models
-                    with torch.no_grad():
-                        target_actions = self.select_action(next_states, noise_std=self.EXPLORATION_NOISE, target=True)
-                        target_Q1 = self.critic1_target(next_states, target_actions)
-                        target_Q2 = self.critic2_target(next_states, target_actions)
-                        # Compute the target Q value
-                        target_Q = rewards + (1 - dones) * self.GAMMA * torch.min(target_Q1, target_Q2)
-
-                    # Get current Q estimate
-                    current_Q1 = self.critic1(states, actions)
-                    current_Q2 = self.critic2(states, actions)
-
-                    # Compute critic loss (MSE)
-                    critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
-
-                    # Optimize the critic
-                    self.critic_optimizer.zero_grad()
-                    critic_loss.backward()
-                    self.critic_optimizer.step()
-
+                    obs = next_obs
+                    episode_reward += reward
+                    episode_length += 1
                     env_steps += 1
+
                     if self.wandb_upload:
                         wandb.log({"env_steps": env_steps})
 
-                    if env_steps % self.UPDATE_DELAY == 0:
+                    if len(self.replay_buffer) > self.BATCH_SIZE:
+                
+                        # Sample a batch of transitions
+                        states, actions, rewards, next_states, dones = self.replay_buffer.sample(self.BATCH_SIZE)
+                        states = torch.FloatTensor(np.array(states)).to(self.device)
+                        actions = torch.FloatTensor(np.array(actions)).to(self.device)
+                        rewards = torch.FloatTensor(np.array(rewards)).unsqueeze(1).to(self.device)
+                        next_states = torch.FloatTensor(np.array(next_states)).to(self.device)
+                        dones = torch.FloatTensor(np.array(dones)).unsqueeze(1).to(self.device)
 
-                        # ------------------- Optimize Actor ------------------- #
-                        # Compute actor loss (Negative of the critic's output for the actor's actions)
-                        actor_loss = -self.critic1(states, self.actor(states)).mean()
+                        # ------------------- Optimize Critic ------------------- #
+                        # Get predicted next-state actions and Q values from target models
+                        with torch.no_grad():
+                            target_actions = self.select_action(next_states, noise_std=self.EXPLORATION_NOISE, target=True)
+                            target_Q1 = self.critic1_target(next_states, target_actions)
+                            target_Q2 = self.critic2_target(next_states, target_actions)
+                            # Compute the target Q value
+                            target_Q = rewards + (1 - dones) * self.GAMMA * torch.min(target_Q1, target_Q2)
 
-                        # Optimize the actor
-                        self.actor_optimizer.zero_grad()
-                        actor_loss.backward()
-                        self.actor_optimizer.step()
+                        # Get current Q estimate
+                        current_Q1 = self.critic1(states, actions)
+                        current_Q2 = self.critic2(states, actions)
 
-                        # ------------------- Soft Updates ------------------- #
-                        # Update target networks
-                        for param, target_param in zip(self.critic1.parameters(), self.critic1_target.parameters()):
-                            target_param.data.copy_(self.TAU * param.data + (1 - self.TAU) * target_param.data)
+                        # Compute critic loss (MSE)
+                        critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
 
-                        for param, target_param in zip(self.critic2.parameters(), self.critic2_target.parameters()):
-                            target_param.data.copy_(self.TAU * param.data + (1 - self.TAU) * target_param.data)
+                        # Optimize the critic
+                        self.critic_optimizer.zero_grad()
+                        critic_loss.backward()
+                        self.critic_optimizer.step()
 
-                        for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
-                            target_param.data.copy_(self.TAU * param.data + (1 - self.TAU) * target_param.data)
+                        if env_steps % self.UPDATE_DELAY == 0:
 
-                        if self.wandb_upload:
-                            # Log the losses to wandb
-                            wandb.log({
-                                "critic_loss": critic_loss.detach().cpu().numpy(),
-                                "actor_loss": actor_loss.detach().cpu().numpy()
-                            })
+                            # ------------------- Optimize Actor ------------------- #
+                            # Compute actor loss (Negative of the critic's output for the actor's actions)
+                            actor_loss = -self.critic1(states, self.actor(states)).mean()
 
-            if self.wandb_upload:
-                wandb.log({
-                    "episode_reward": episode_reward,
-                    "episode_length": episode_length
-                })
+                            # Optimize the actor
+                            self.actor_optimizer.zero_grad()
+                            actor_loss.backward()
+                            self.actor_optimizer.step()
 
-            """ save network weights """
-            if self.save_model and (episode + 1) % 100 == 0:
-                torch.save(self.state_dict(), f"{model_path}/model.pt")
+                            # ------------------- Soft Updates ------------------- #
+                            # Update target networks
+                            for param, target_param in zip(self.critic1.parameters(), self.critic1_target.parameters()):
+                                target_param.data.copy_(self.TAU * param.data + (1 - self.TAU) * target_param.data)
 
-            if store_episode_stats:
-                episode_returns.append(episode_reward)
-                episode_lengths.append(episode_length)
-                if len(episode_returns) > 10 and self.wandb_upload:
-                    wandb.log(
-                        {
-                            "mean_episode_return_10": np.mean(episode_returns[-10:])
-                        }
-                    )
-                if env_steps > 100000:
-                    print(f"Early stopping at episode {episode + 1} due to reaching 100,000 update steps.")
-                    break
+                            for param, target_param in zip(self.critic2.parameters(), self.critic2_target.parameters()):
+                                target_param.data.copy_(self.TAU * param.data + (1 - self.TAU) * target_param.data)
+
+                            for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
+                                target_param.data.copy_(self.TAU * param.data + (1 - self.TAU) * target_param.data)
+
+                            if self.wandb_upload:
+                                # Log the losses to wandb
+                                wandb.log({
+                                    "critic_loss": critic_loss.detach().cpu().numpy(),
+                                    "actor_loss": actor_loss.detach().cpu().numpy()
+                                })
+
+                        """ save network weights """
+                        if self.save_model and env_steps%10000 == 0:
+                            torch.save(self.state_dict(), f"{model_path}/model.pt")
+
+                if self.wandb_upload:
+                    wandb.log({
+                        "episode_reward": episode_reward,
+                        "episode_length": episode_length
+                    })
+
+                if store_episode_stats:
+                    episode_returns.append(episode_reward)
+                    episode_lengths.append(episode_length)
+                    if len(episode_returns) > 10 and self.wandb_upload:
+                        wandb.log(
+                            {
+                                "mean_episode_return_10": np.mean(episode_returns[-10:])
+                            }
+                        )
+
+                pbar.update(episode_length)
 
         if self.wandb_upload:
             run.finish()
 
 
-    def test_agent(self, env, n_episodes=1, delay_steps=0, delay_type=None, noise_std=0.0, noise_type=None):
+    def test_agent(self, env, n_episodes=1, record_stats=False, model_path=None):
  
         env_name = env.spec.id
 
-        model_path = f"Weights/{env_name}_TD3_{self.MAX_EPISODES}"
+        if model_path is None:
+            model_path = f"Weights/{env_name}_TD3_{self.MAX_EPISODES}"
 
         if os.path.exists(model_path):
+            print(f"Loading model weights from {model_path}")
             self.load_state_dict(torch.load(f"{model_path}/model.pt", map_location=self.device))
         else:
             print("Weights not found. Please train the agent first.")
             return
+
+        
+        if record_stats:
+            episode_rewards = []
+            episode_lengths = []
 
         for episode in range(n_episodes):
 
@@ -343,34 +355,20 @@ class TD3Agent(torch_nn.Module):
                     entity="arkapatra31-ust",
                     # Set the wandb project where this run will be logged.
                     project="TD3-Test",
-                    group=f"{env_name}-{n_episodes}-Act-Delay-5",
+                    # group=f"{env_name}-{n_episodes}-Act-Delay-5",
                     # Track hyperparameters and run metadata.
                     config={
                         "env": env_name,
-                        "actor_lr": self.LR_ACTOR,
-                        "critic_lr": self.LR_CRITIC,
-                        "gamma": self.GAMMA,
-                        "tau": self.TAU,
-                        "batch_size": self.BATCH_SIZE,
-                        "max_episodes": self.MAX_EPISODES,
-                        "exploration_noise": self.EXPLORATION_NOISE,
-                        "delay_steps": delay_steps,
-                        "delay_type": delay_type,
-                        "noise_std": noise_std,
-                        "noise_type": noise_type,
                         "model_path": model_path,
                     },
                 )
                 run.name = f"TD3_Test_Episode_{episode + 1}"
         
-            obs, info = env.reset()
-            if hasattr(env, 'delay_buffer'):
-                del env.delay_buffer
-            if hasattr(env, 'action_buffer'):
-                del env.action_buffer
             done = False
             episode_reward = 0
+            episode_length = 0
             renders = [] 
+            obs, _ = env.reset(seed=SEED + episode)
             
             while not done:
 
@@ -378,6 +376,7 @@ class TD3Agent(torch_nn.Module):
                 next_obs, reward, terminated, truncated, _ = env.step(action)
                 done = terminated or truncated
                 episode_reward += reward
+                episode_length += 1
                 obs = next_obs
 
                 if self.wandb_upload:
@@ -405,9 +404,18 @@ class TD3Agent(torch_nn.Module):
                     video = np.transpose(video, (0, 3, 1, 2))
                     wandb.log({"showcase_video": wandb.Video(video, fps=8, format="mp4")})
                 wandb.finish()
+
+            if record_stats:
+                episode_rewards.append(episode_reward)
+                episode_lengths.append(episode_length)
             
-            print(f"Episode {episode + 1}: Total Reward: {episode_reward}")
+            print(f"Episode {episode + 1}: Total Reward: {episode_reward}, Length: {episode_length}")
+
         env.close()
+        if record_stats:
+            return episode_rewards, episode_lengths
+
+
  
 def hyperparameter_tuning(env, state_dim, action_dim, percept=False, device="cpu"):
     # Define a grid of hyperparameters to sweep over

@@ -83,15 +83,15 @@ class WorkerBuffer:
 
     def sample(self, batch_size):
         batch = random.sample(self.storage, batch_size)
-        s, g, a, r, ns, ng, d = map(np.array, zip(*batch))
+        s, g, a, r, ns, ng, d = map(np.asarray, zip(*batch))
         return (
-            torch.FloatTensor(s).to(self.device),
-            torch.FloatTensor(g).to(self.device),
-            torch.FloatTensor(a).to(self.device),
-            torch.FloatTensor(r).unsqueeze(1).to(self.device),
-            torch.FloatTensor(ns).to(self.device),
-            torch.FloatTensor(ng).to(self.device),
-            torch.FloatTensor(d).unsqueeze(1).to(self.device)
+            torch.as_tensor(s, dtype=torch.float32, device=self.device),
+            torch.as_tensor(g, dtype=torch.float32, device=self.device),
+            torch.as_tensor(a, dtype=torch.float32, device=self.device),
+            torch.as_tensor(r, dtype=torch.float32, device=self.device).unsqueeze(1),
+            torch.as_tensor(ns, dtype=torch.float32, device=self.device),
+            torch.as_tensor(ng, dtype=torch.float32, device=self.device),
+            torch.as_tensor(d, dtype=torch.float32, device=self.device).unsqueeze(1)
         )
 
     def __len__(self):
@@ -115,15 +115,15 @@ class ManagerBuffer:
 
     def sample(self, batch_size):
         batch = random.sample(self.storage, batch_size)
-        s, g, r, ns, d, s_seq, a_seq = map(np.array, zip(*batch))
+        s, g, r, ns, d, s_seq, a_seq = map(np.asarray, zip(*batch))
         return (
-            torch.FloatTensor(s).to(self.device),
-            torch.FloatTensor(g).to(self.device),
-            torch.FloatTensor(r).unsqueeze(1).to(self.device),
-            torch.FloatTensor(ns).to(self.device),
-            torch.FloatTensor(d).unsqueeze(1).to(self.device),
-            torch.FloatTensor(s_seq).to(self.device),
-            torch.FloatTensor(a_seq).to(self.device)
+            torch.as_tensor(s, dtype=torch.float32, device=self.device),
+            torch.as_tensor(g, dtype=torch.float32, device=self.device),
+            torch.as_tensor(r, dtype=torch.float32, device=self.device).unsqueeze(1),
+            torch.as_tensor(ns, dtype=torch.float32, device=self.device),
+            torch.as_tensor(d, dtype=torch.float32, device=self.device).unsqueeze(1),
+            torch.as_tensor(s_seq, dtype=torch.float32, device=self.device),
+            torch.as_tensor(a_seq, dtype=torch.float32, device=self.device)
         )
 
     def __len__(self):
@@ -137,18 +137,11 @@ class TD3(nn.Module):
         # General TD3 / RL
         self.LR_ACTOR = hyperparams.get('LR_ACTOR', 1e-4)
         self.LR_CRITIC = hyperparams.get('LR_CRITIC', 3e-4)
-        self.GAMMA_MANAGER = hyperparams.get('GAMMA_MANAGER', 0.99)
-        self.GAMMA_WORKER = hyperparams.get('GAMMA_WORKER', 0.95)
         self.TAU = hyperparams.get('TAU', 0.005)
         self.BATCH_SIZE = hyperparams.get('BATCH_SIZE', 64)
-        self.BUFFER_SIZE = hyperparams.get('BUFFER_SIZE', int(1e5))
-        self.EXPL_NOISE_MANAGER = hyperparams.get('EXPL_NOISE_MANAGER', 1.0)
-        self.EXPL_NOISE_WORKER = hyperparams.get('EXPL_NOISE_WORKER', 0.1)
         self.POLICY_NOISE = hyperparams.get('POLICY_NOISE', 0.2)
         self.NOISE_CLIP = hyperparams.get('NOISE_CLIP', 0.5)
         self.POLICY_FREQ = hyperparams.get('POLICY_FREQ', 4)
-        self.MAX_EPISODES = hyperparams.get('MAX_EPISODES', 2000)
-        self.MAX_TIMESTEPS = hyperparams.get('MAX_TIMESTEPS', 1000)
 
         self.device = device
         self.MAX_ACTION = max_action
@@ -166,7 +159,7 @@ class TD3(nn.Module):
         self.total_it = 0
 
     def select_action(self, state):
-        state = torch.FloatTensor(state.reshape(1, -1)).to(self.device)
+        state = torch.as_tensor(state.reshape(1, -1), dtype=torch.float32, device=self.device)
         with torch.no_grad():
             return self.actor(state).cpu().data.numpy().flatten()
 
@@ -213,28 +206,28 @@ class TD3(nn.Module):
 
 # --- HIRO Algorithm Wrapper ---
 class HIROAgent(nn.Module):
-    def __init__(self, state_dim, action_dim, hyperparams={}, device="cpu"):
+    def __init__(self, state_dim, action_dim, percept=False, device="cpu", hyperparams={}):
         super(HIROAgent, self).__init__()
 
         # HIRO specific
-        self.C = hyperparams.get("C", 50)                      # Manager action frequency
+        self.C = hyperparams.get("SUBGOAL_HORIZON", 10)                      # Manager action frequency
         self.GOAL_BOUND = hyperparams.get("GOAL_BOUND", 2.0)   # Max magnitude for goals (state differences)
+        self.EXPL_NOISE_MANAGER = hyperparams.get('EXPL_NOISE_MANAGER', 1.0)
+        self.EXPL_NOISE_WORKER = hyperparams.get('EXPL_NOISE_WORKER', 0.1)
+        self.BUFFER_SIZE = hyperparams.get('BUFFER_SIZE', int(1e5))
+        self.GAMMA_MANAGER = hyperparams.get('GAMMA_M', 0.99)
+        self.GAMMA_WORKER = hyperparams.get('GAMMA_W', 0.95)
+        # self.MAX_EPISODES = hyperparams.get('MAX_EPISODES', 2000)
+        self.MAX_ENV_STEPS = hyperparams.get('MAX_ENV_STEPS', 1e6)
 
         # General TD3 / RL
         self.LR_ACTOR = hyperparams.get('LR_ACTOR', 1e-4)
         self.LR_CRITIC = hyperparams.get('LR_CRITIC', 3e-4)
-        self.GAMMA_MANAGER = hyperparams.get('GAMMA_M', 0.99)
-        self.GAMMA_WORKER = hyperparams.get('GAMMA_W', 0.95)
         self.TAU = hyperparams.get('TAU', 0.005)
         self.BATCH_SIZE = hyperparams.get('BATCH_SIZE', 64)
-        self.BUFFER_SIZE = hyperparams.get('BUFFER_SIZE', int(1e5))
-        self.EXPL_NOISE_MANAGER = hyperparams.get('EXPL_NOISE_MANAGER', 1.0)
-        self.EXPL_NOISE_WORKER = hyperparams.get('EXPL_NOISE_WORKER', 0.1)
         self.POLICY_NOISE = hyperparams.get('POLICY_NOISE', 0.2)
         self.NOISE_CLIP = hyperparams.get('NOISE_CLIP', 0.5)
         self.POLICY_FREQ = hyperparams.get('POLICY_FREQ', 4)
-        self.MAX_EPISODES = hyperparams.get('MAX_EPISODES', 2000)
-        self.MAX_TIMESTEPS = hyperparams.get('MAX_TIMESTEPS', 1000)
         self.MAX_ACTION = hyperparams.get('MAX_ACTION', 1.0)
 
         self.wandb_upload = hyperparams.get('WANDB_UPLOAD', False)
@@ -265,6 +258,8 @@ class HIROAgent(nn.Module):
         if len(self.manager_buffer) < self.BATCH_SIZE:
             return
 
+        self.manager.total_it += 1
+
         # 1. Sample from manager buffer
         states, goals, rewards, next_states, dones, states_seq, actions_seq = self.manager_buffer.sample(self.BATCH_SIZE)
         
@@ -273,50 +268,45 @@ class HIROAgent(nn.Module):
         batch_size = states.shape[0]
         diff = next_states - states
         
-        candidates = torch.zeros((batch_size, 10, self.goal_dim)).to(self.device)
+        num_candidates = 10
+        candidates = torch.empty((batch_size, num_candidates, self.goal_dim), device=self.device)
         candidates[:, 0, :] = goals
         candidates[:, 1, :] = diff
         
         # 8 random candidates (Gaussian around diff)
-        for i in range(2, 10):
+        for i in range(2, num_candidates):
             noise = torch.randn_like(diff) * (self.GOAL_BOUND / 2.0)
             candidates[:, i, :] = torch.clamp(diff + noise, -self.GOAL_BOUND, self.GOAL_BOUND)
 
         # 3. Evaluate candidates by calculating log probability (or negative MSE) of taken actions
-        best_goals = torch.zeros((batch_size, self.goal_dim)).to(self.device)
-        
-        for b in range(batch_size):
-            best_idx = 0
-            max_log_prob = -float('inf')
-            
-            for c_idx in range(10):
-                candidate_goal = candidates[b, c_idx]
-                log_prob = 0.0
-                curr_goal = candidate_goal.clone()
-                
-                # Simulate goal transition over the sequences
-                for t in range(self.C):
-                    s_t = states_seq[b, t]
-                    a_t = actions_seq[b, t]
-                    
-                    if torch.all(s_t == 0) and torch.all(a_t == 0):
-                        break # Padded dummy values if episode ended early
-                        
-                    worker_input = torch.cat([s_t, curr_goal]).unsqueeze(0)
-                    # Negative MSE between deterministic action and actual action (surrogate for log prob)
-                    with torch.no_grad():
-                        pred_action = self.worker.actor(worker_input).squeeze(0)
-                    log_prob += -F.mse_loss(pred_action, a_t).item()
-                    
-                    if t < self.C - 1:
-                        s_next = states_seq[b, t+1]
-                        curr_goal = s_t + curr_goal - s_next
-                
-                if log_prob > max_log_prob:
-                    max_log_prob = log_prob
-                    best_idx = c_idx
-            
-            best_goals[b] = candidates[b, best_idx]
+        log_probs = torch.zeros((batch_size, num_candidates), device=self.device)
+        curr_goals = candidates.clone()
+
+        with torch.no_grad():
+            for t in range(self.C):
+                s_t = states_seq[:, t]
+                a_t = actions_seq[:, t]
+
+                # Padded dummy values mark early episode termination.
+                valid = ~((s_t == 0).all(dim=1) & (a_t == 0).all(dim=1))
+                if not valid.any():
+                    break
+
+                s_t_expanded = s_t.unsqueeze(1).expand(-1, num_candidates, -1)
+                worker_input = torch.cat([s_t_expanded, curr_goals], dim=2)
+                pred_action = self.worker.actor(
+                    worker_input.reshape(batch_size * num_candidates, -1)
+                ).reshape(batch_size, num_candidates, self.action_dim)
+
+                action_error = (pred_action - a_t.unsqueeze(1)).pow(2).mean(dim=2)
+                log_probs -= action_error * valid.unsqueeze(1)
+
+                if t < self.C - 1:
+                    s_next = states_seq[:, t + 1]
+                    curr_goals = s_t_expanded + curr_goals - s_next.unsqueeze(1)
+
+        best_idxs = log_probs.argmax(dim=1)
+        best_goals = candidates[torch.arange(batch_size, device=self.device), best_idxs]
 
         # 4. Train Manager with the corrected goals
         # Replace the sampled buffer goals with corrected ones for training
@@ -353,172 +343,8 @@ class HIROAgent(nn.Module):
         # i.e., minimizing distance between (s_t + g_t) and s_{t+1}
         return -np.linalg.norm(state + goal - next_state)
 
-    def train_agent(self, env):
-
-        env_name = env.spec.id
-
-        model_path = f"Weights/{env_name}_HIRO_weights/HIRO_{env_name}_{self.MAX_EPISODES}.pt"
-        os.makedirs(os.path.dirname(f"Weights/{env_name}_HIRO_weights"), exist_ok=True)
-
-        if self.wandb_upload:
-            # Start a new wandb run to track this script.
-            run = wandb.init(
-                # Set the wandb entity where your project will be logged (generally your team name).
-                entity="arkapatra31-ust",
-                # Set the wandb project where this run will be logged.
-                project="HIRO-Train",
-                # Track hyperparameters and run metadata.
-                config={
-                    "env": env_name,
-                    "architecture": "HIRO",
-                    "actor_lr": self.LR_ACTOR,
-                    "critic_lr": self.LR_CRITIC,
-                    "tau": self.TAU,
-                    "batch_size": self.BATCH_SIZE,
-                    "buffer_size": self.BUFFER_SIZE,
-                    "policy_noise": self.POLICY_NOISE,
-                    "noise_clip": self.NOISE_CLIP,
-                    "policy_freq": self.POLICY_FREQ,
-                    "max_episodes": self.MAX_EPISODES,
-                    "max_timesteps": self.MAX_TIMESTEPS,
-                    "expl_noise_manager": self.EXPL_NOISE_MANAGER,
-                    "expl_noise_worker": self.EXPL_NOISE_WORKER,
-                    "goal_bound": self.GOAL_BOUND,
-                    "subgoal_horizon": self.C,
-                    "manager_gamma": self.GAMMA_MANAGER,
-                    "worker_gamma": self.GAMMA_WORKER,
-                    "model_path": model_path,
-                    "trainable_params": self.trainable_params,
-                    "total_params": self.total_params,
-                    "total_unique_params": self.total_unique_params
-                }
-            )
-            run.name = f"{env_name}_{self.MAX_EPISODES}_{self.LR_ACTOR:.4f}_{self.LR_CRITIC:.4f}"
-
-        reward_history = []
-        env_steps = 0
-        
-        for episode in tqdm(range(1, self.MAX_EPISODES + 1)):
-            state, _ = env.reset()
-            episode_reward = 0
-            done = False
-            t = 0
-            
-            while not done and t < self.MAX_TIMESTEPS:
-                # High-level goal selection every C steps
-                if t % self.C == 0:
-                    goal = self.manager.select_action(state)
-                    # Add exploration noise to goal
-                    goal += np.random.normal(0, self.EXPL_NOISE_MANAGER, size=self.state_dim)
-                    goal = np.clip(goal, -self.GOAL_BOUND, self.GOAL_BOUND)
-                    
-                    manager_state_start = state.copy()
-                    manager_reward = 0
-                    
-                    # Storage for off-policy correction
-                    states_seq = np.zeros((self.C, self.state_dim))
-                    actions_seq = np.zeros((self.C, self.action_dim))
-                    seq_step = 0
-
-                # Low-level action selection
-                worker_input = np.concatenate([state, goal])
-                action = self.worker.select_action(worker_input)
-                action += np.random.normal(0, self.EXPL_NOISE_WORKER, size=self.action_dim)
-                action = np.clip(action, -self.MAX_ACTION, self.MAX_ACTION)
-
-                # Step environment
-                next_state, reward, terminated, truncated, _ = env.step(action)
-                done = terminated or truncated
-                episode_reward += reward
-                manager_reward += reward
-                env_steps += 1
-                if self.wandb_upload:
-                    wandb.log({
-                        "env_steps": env_steps
-                    })
-                    
-                # Worker Intrinsic Reward & Goal Transition
-                worker_reward = self.intrinsic_reward(state, goal, next_state)
-                next_goal = state + goal - next_state
-                
-                # Store Worker Transition
-                self.worker_buffer.add(state, goal, action, worker_reward, next_state, next_goal, float(done))
-                
-                # Track sequence for Manager
-                states_seq[seq_step] = state
-                actions_seq[seq_step] = action
-                seq_step += 1
-
-                # Train Worker
-                self.train_worker()
-
-                state = next_state
-                t += 1
-
-                # Manager Transition Storage and Training (at end of C steps or end of episode)
-                if t % self.C == 0 or done:
-                    self.manager_buffer.add(
-                        manager_state_start, goal, manager_reward, state, float(done),
-                        states_seq, actions_seq
-                    )
-                    self.off_policy_correction()
-
-            if self.wandb_upload:
-                wandb.log({
-                    "episode_reward": episode_reward,
-                    "episode_length": t,
-                })
-
-        if self.save_model:
-            torch.save(self.state_dict(), model_path)
-            print(f"Model saved to {model_path}")
-
-        env.close()
-
-    def test_agent(self, env, n_episodes=1):
-
-        env_name = env.spec.id
-
-        model_path = f"Weights/{env_name}_HIRO_weights/HIRO_{env_name}_{self.MAX_EPISODES}.pt"
-
-        if os.path.exists(model_path):
-            self.load_state_dict(torch.load(model_path, map_location=self.device))
-        else:
-            print("Weights not found. Please train the agent first.")
-            return
-
-        for episode in range(n_episodes):
-
-            obs, info = env.reset()
-            self.done = False
-            self.episode_reward = 0
-            self.episode_length = 0
-            renders = []  # Store frames for video logging
-            
-            while not self.done:
-                desired_gstate = info.get('desired_goal', env.observation_space.sample())  # Use the desired goal from the info dictionary if available, otherwise sample a random goal
-                achieved_gstate = info.get('achieved_goal', obs)  # Use the achieved goal from the info dictionary if available, otherwise use the current observation
-                goal = desired_gstate - achieved_gstate  # Compute the goal as the difference between the desired goal and the current observation
-
-                self.highest_subgoal_achieved_level = -1  # Reset the highest subgoal achieved level for this episode
-                next_obs = self.test_level(env, self.N_LEVELS-1, obs, info, [goal], subgoal_test=True)  # Start testing from the highest level
-                obs = next_obs
-
-            if self.wandb_upload:
-                 if renders:
-                     renders = [
-                         cv2.resize(render, (500, 500), interpolation=cv2.INTER_AREA)
-                         for render in renders
-                     ]
-                     video = np.stack(renders, axis=0)
-                     video = np.transpose(video, (0, 3, 1, 2))
-                     wandb.log({"showcase_video": wandb.Video(video, fps=8, format="mp4")})
-                 wandb.finish()
-            
-            print(f"Episode {episode + 1}: Total Reward: {self.episode_reward}, Length: {self.episode_length}")
-        env.close()
-
     def ddpg_update(self):
+        # HIRO uses TD3 for both manager and worker, but if you want to implement DDPG updates, you can do so here.
 
         for k in range(self.N_LEVELS):
 
@@ -562,9 +388,7 @@ class HIROAgent(nn.Module):
                 actor_loss.backward()
                 self.actor_optimizer[k].step()
 
-                wandb_upload = True  # Whether to upload logs to Weights & Biases
-
-                if wandb_upload:
+                if self.wandb_upload:
                     wandb.log({
                         f"critic_loss_{k}": critic_loss.item(),
                         f"actor_loss_{k}": actor_loss.item(),
@@ -578,3 +402,241 @@ class HIROAgent(nn.Module):
                 # for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
                 #     target_param.data.copy_(self.TAU * param.data + (1 - self.TAU) * target_param.data)
 
+    def train_agent(self, env, store_episode_rewards=False):
+
+        env_name = env.spec.id
+        model_path = None
+
+        if self.save_model:
+            model_path = f"Weights/{env_name}_HIRO_weights/HIRO_{env_name}_C_{self.C}_gb_{self.GOAL_BOUND}_xx"
+            os.makedirs(model_path, exist_ok=True)
+
+        if self.wandb_upload:
+            # Start a new wandb run to track this script.
+            run = wandb.init(
+                # Set the wandb entity where your project will be logged (generally your team name).
+                entity="arkapatra31-ust",
+                # Set the wandb project where this run will be logged.
+                project="HIRO-Train",
+                # Track hyperparameters and run metadata.
+                config={
+                    "env": env_name,
+                    "architecture": "HIRO",
+                    "actor_lr": self.LR_ACTOR,
+                    "critic_lr": self.LR_CRITIC,
+                    "tau": self.TAU,
+                    "batch_size": self.BATCH_SIZE,
+                    "buffer_size": self.BUFFER_SIZE,
+                    "policy_noise": self.POLICY_NOISE,
+                    "noise_clip": self.NOISE_CLIP,
+                    "policy_freq": self.POLICY_FREQ,
+                    "max_env_steps": self.MAX_ENV_STEPS,
+                    "expl_noise_manager": self.EXPL_NOISE_MANAGER,
+                    "expl_noise_worker": self.EXPL_NOISE_WORKER,
+                    "goal_bound": self.GOAL_BOUND,
+                    "subgoal_horizon": self.C,
+                    "manager_gamma": self.GAMMA_MANAGER,
+                    "worker_gamma": self.GAMMA_WORKER,
+                    "model_path": model_path,
+                    "trainable_params": self.trainable_params,
+                    "total_params": self.total_params,
+                    "total_unique_params": self.total_unique_params
+                }
+            )
+            run.name = f"{env_name}_{self.MAX_ENV_STEPS}_{self.LR_ACTOR:.4f}_{self.LR_CRITIC:.4f}"
+
+        reward_history = []
+        env_steps = 0
+
+        with tqdm(total=self.MAX_ENV_STEPS, desc="Training Progress") as pbar:
+            while env_steps < self.MAX_ENV_STEPS:
+
+                state, _ = env.reset(seed=SEED+env_steps)  # Seed environment for reproducibility
+                episode_reward = 0
+                done = False
+                episode_length = 0
+                
+                while not done:
+                    # High-level goal selection every C steps
+                    if episode_length % self.C == 0:
+                        goal = self.manager.select_action(state)
+                        # Add exploration noise to goal
+                        goal += np.random.normal(0, self.EXPL_NOISE_MANAGER, size=self.state_dim)
+                        goal = np.clip(goal, -self.GOAL_BOUND, self.GOAL_BOUND)
+                        
+                        manager_state_start = state.copy()
+                        manager_reward = 0
+                        
+                        # Storage for off-policy correction
+                        states_seq = np.zeros((self.C, self.state_dim))
+                        actions_seq = np.zeros((self.C, self.action_dim))
+                        seq_step = 0
+
+                    # Low-level action selection
+                    worker_input = np.concatenate([state, goal])
+                    action = self.worker.select_action(worker_input)
+                    action += np.random.normal(0, self.EXPL_NOISE_WORKER, size=self.action_dim)
+                    action = np.clip(action, -self.MAX_ACTION, self.MAX_ACTION)
+
+                    # Step environment
+                    next_state, reward, terminated, truncated, _ = env.step(action)
+                    done = terminated or truncated
+                    episode_reward += reward
+                    manager_reward += reward
+                    env_steps += 1
+                        
+                    # Worker Intrinsic Reward & Goal Transition
+                    worker_reward = self.intrinsic_reward(state, goal, next_state)
+                    next_goal = state + goal - next_state
+
+                    if self.wandb_upload:
+                        wandb.log({
+                            "env_steps": env_steps,
+                            "worker_reward": worker_reward,
+                            "manager_reward": manager_reward,
+                        })
+                    
+                    # Store Worker Transition
+                    self.worker_buffer.add(state, goal, action, worker_reward, next_state, next_goal, float(done))
+                    
+                    # Track sequence for Manager
+                    states_seq[seq_step] = state
+                    actions_seq[seq_step] = action
+                    seq_step += 1
+
+                    # Train Worker
+                    self.train_worker()
+
+                    state = next_state
+                    goal = next_goal
+                    episode_length += 1
+
+                    # Manager Transition Storage and Training (at end of C steps or end of episode)
+                    if episode_length % self.C == 0 or done:
+                        self.manager_buffer.add(
+                            manager_state_start, goal, manager_reward, state, float(done),
+                            states_seq, actions_seq
+                        )
+                        self.off_policy_correction()
+
+                    if self.save_model and env_steps % 100000 == 0:
+                        torch.save(self.state_dict(), f"{model_path}/model.pt")
+                        # print(f"Model saved to {model_path}")
+
+                if self.wandb_upload:
+                    wandb.log({
+                        "episode_reward": episode_reward,
+                        "episode_length": episode_length,
+                    })
+
+                if store_episode_rewards:
+                    reward_history.append(episode_reward)
+                    if len(reward_history) > 50:
+                        reward_history.pop(0)
+                    avg_reward = np.mean(reward_history)
+                    if self.wandb_upload:
+                        wandb.log({
+                            "avg_reward_last_50": avg_reward
+                        })
+
+                pbar.update(episode_length)
+
+        env.close()
+
+    def test_agent(self, env, n_episodes=1, record_stats=False, model_path=None):
+
+        env_name = env.spec.id
+
+        if model_path is None:
+            model_path = f"Weights/{env_name}_HIRO_weights/HIRO_{env_name}_C_{self.C}_gb_{self.GOAL_BOUND}"
+
+        if os.path.exists(model_path):
+            self.load_state_dict(torch.load(f"{model_path}/model.pt", map_location=self.device))
+        else:
+            print("Weights not found. Please train the agent first.")
+            return
+
+        if self.wandb_upload:
+            run = wandb.init(
+                entity="arkapatra31-ust",
+                project="HIRO-Test",
+                config={
+                    "env": env_name,
+                    "architecture": "HIRO",
+                    "model_path": model_path,
+                }
+            )
+            run.name = f"{env_name}_test_{n_episodes}_episodes"
+
+        if record_stats:
+            episode_rewards = []
+            episode_lengths = []
+
+        for episode in range(n_episodes):
+
+            obs, info = env.reset(seed=SEED + episode)  # Seed environment for reproducibility
+            done = False
+            episode_reward = 0
+            episode_length = 0
+            renders = []  # Store frames for video logging
+            
+            while not done:
+                if episode_length % self.C == 0:
+                    goal = self.manager.select_action(obs)
+                    goal = np.clip(goal, -self.GOAL_BOUND, self.GOAL_BOUND)
+                    manager_state_start = obs.copy()
+                    manager_reward = 0
+
+                worker_input = np.concatenate([obs, goal])
+                action = self.worker.select_action(worker_input)
+                action = np.clip(action, -self.MAX_ACTION, self.MAX_ACTION)
+
+                next_obs, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+                episode_reward += reward
+                manager_reward += reward
+                episode_length += 1
+
+                if self.wandb_upload:
+                    # Capture the render for logging
+                    frame = env.render()
+                    if frame is not None:
+                        # W&B handles videos best when frames are uint8 CHW tensors.
+                        if frame.shape[-1] == 4:
+                            frame = frame[:, :, :3]
+                        frame = np.asarray(frame, dtype=np.uint8)
+                        renders.append(frame)
+
+                worker_reward = self.intrinsic_reward(obs, goal, next_obs)
+                next_goal = obs + goal - next_obs
+
+                obs = next_obs
+                goal = next_goal
+
+                if self.wandb_upload:
+                    wandb.log({
+                        "episode_reward": episode_reward,
+                        "episode_length": episode_length,
+                        "manager_reward": manager_reward,
+                        "worker_reward": worker_reward,
+                    })
+
+            if self.wandb_upload:
+                 if renders:
+                     renders = [
+                         cv2.resize(render, (500, 500), interpolation=cv2.INTER_AREA)
+                         for render in renders
+                     ]
+                     video = np.stack(renders, axis=0)
+                     video = np.transpose(video, (0, 3, 1, 2))
+                     wandb.log({"showcase_video": wandb.Video(video, fps=8, format="mp4")})
+                 wandb.finish()
+
+            if record_stats:
+                episode_rewards.append(episode_reward)
+                episode_lengths.append(episode_length)
+            
+            print(f"Episode {episode + 1}: Total Reward: {episode_reward}, Length: {episode_length}")
+        env.close()
+        if record_stats:
+            return episode_rewards, episode_lengths

@@ -185,7 +185,7 @@ class DDPGAgent(torch_nn.Module):
                 obs, _ = env.reset(seed=SEED)
 
         for episode in tqdm(range(self.MAX_EPISODES)):
-            obs, info = env.reset(seed=SEED)
+            obs, info = env.reset(seed=SEED+episode)
             episode_reward = 0
             done = False
             

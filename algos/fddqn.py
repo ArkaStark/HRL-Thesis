@@ -73,21 +73,24 @@ class FDDQNAgent(nn.Module):
     def __init__(self, obs_dim, action_dim, hyperparams={}, device="cpu"):
         super(FDDQNAgent, self).__init__()
 
-        self.lower_lr = hyperparams.get("lower_lr", 3e-4)
-        self.higher_lr = hyperparams.get("higher_lr", 3e-5)
-        self.gamma_h = hyperparams.get("gamma_h", 0.999)
-        self.gamma_l = hyperparams.get("gamma_l", 0.99)
-        self.T = hyperparams.get("T", 10)
-        self.goal_dim = hyperparams.get("goal_dim", 4)
-        self.n_updates = hyperparams.get("n_updates", 10000)
-        self.n_steps_per_update = hyperparams.get("n_steps_per_update", 40)
-        self.rl_wt = hyperparams.get("rl_wt", 0.7)
-        self.gl_wt = hyperparams.get("gl_wt", 0.9)
-        self.action_eps = hyperparams.get("action_eps", 0.05)
-        self.goal_eps = hyperparams.get("goal_eps", 0.1)
+        self.lower_lr = hyperparams.get("LR_LOWER", 3e-4)
+        self.higher_lr = hyperparams.get("LR_HIGHER", 3e-5)
+        self.gamma_h = hyperparams.get("GAMMA_H", 0.999)
+        self.gamma_l = hyperparams.get("GAMMA_L", 0.99)
+        self.T = hyperparams.get("SUBGOAL_HORIZON", 10)
+        self.goal_dim = hyperparams.get("GOAL_DIM", 4)
+        self.max_env_steps = hyperparams.get("MAX_ENV_STEPS", 100000)
+        # self.n_updates = hyperparams.get("n_updates", 10000)
+        self.n_steps_per_update = hyperparams.get("N_STEPS_PER_UPDATE", 40)
+        self.rl_wt = hyperparams.get("RL_WT", 0.7)
+        self.gl_wt = hyperparams.get("GL_WT", 0.9)
+        self.action_eps = hyperparams.get("ACTION_EPS", 0.05)
+        self.goal_eps = hyperparams.get("GOAL_EPS", 0.1)
 
-        self.wandb_upload = hyperparams.get("wandb_upload", False)
-        self.save_model = hyperparams.get("save_model", False)
+        self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
+        self.save_model = hyperparams.get("SAVE_MODEL", False)
+
+        self.n_updates = int(self.max_env_steps / self.n_steps_per_update)
 
         self.obs_dim = obs_dim
         self.action_dim = action_dim
@@ -96,10 +99,7 @@ class FDDQNAgent(nn.Module):
         self.device = device
         self.alpha = self.lower_lr # learning rate for the worker DQN
         self.beta = self.higher_lr # learning rate for the manager DQN
-        self.rl_wt = self.rl_wt # weight for the reinforcement learning loss
-        self.gl_wt = self.gl_wt # weight for the goal learning loss
-        self.action_eps = self.action_eps # epsilon for action selection
-        self.goal_eps = self.goal_eps # epsilon for goal selection
+
         # initialize the worker and manager DQNs
         self.lower_A = lower_DQN(obs_dim, action_dim, self.goal_dim, device).to(device)
         self.lower_B = lower_DQN(obs_dim, action_dim, self.goal_dim, device).to(device)
@@ -478,49 +478,3 @@ class FDDQNAgent(nn.Module):
             
 
         env.close()
-
-def hyperparameter_tuning(env, state_dim, action_dim, percept=False, device="cpu"):
-    # Define a grid of hyperparameters to sweep over
-    sweep_config = {
-        'method': 'bayes',
-        'metric': {'name': 'episode_reward', 'goal': 'maximize'},
-        'parameters': {
-            'lower_lr': {'distribution': 'log_uniform_values', 'min': 1e-4, 'max': 1e-3},
-            'higher_lr': {'distribution': 'log_uniform_values', 'min': 1e-5, 'max': 1e-4},
-            # 'goal_dim': {'values': [4]},
-            # 'T': {'values': [5, 10, 20]},
-            'rl_wt': {'distribution': 'uniform', 'min': 0.1, 'max': 1.0},
-            'gl_wt': {'distribution': 'uniform', 'min': 0.1, 'max': 1.0},
-            # 'action_eps': {'distribution': 'uniform', 'min': 0.01, 'max': 0.1},
-            # 'goal_eps': {'distribution': 'uniform', 'min': 0.01, 'max': 0.1},
-
-        },
-        # 'early_terminate': {'type': 'hyperband', 'min_iter': 500}
-    }
-
-    # Initialize a W&B sweep
-    sweep_id = wandb.sweep(sweep_config, project="FDDQN-Hyperparameter-Tuning", entity="arkapatra31-ust")
-
-    # Define the training function for the sweep
-    def train_sweep():
-        with wandb.init() as run:
-            config = wandb.config
-            hyperparams = {
-                "lower_lr": config.lower_lr,
-                "higher_lr": config.higher_lr,
-                # "goal_dim": config.goal_dim,
-                # "T": config.T,
-                "rl_wt": config.rl_wt,
-                "gl_wt": config.gl_wt,
-                # "action_eps": config.action_eps,
-                # "goal_eps": config.goal_eps,
-                "wandb_upload": True,
-            }
-            wandb.run.name = f"FDDQN_lowerLR_{hyperparams['lower_lr']:.4f}_higherLR_{hyperparams['higher_lr']:.5f}_rl_wt_{hyperparams['rl_wt']:.2f}_gl_wt_{hyperparams['gl_wt']:.2f}"
-            print(f"Starting a new sweep run with hyperparameters:\n {hyperparams}")
-            fddqn_agent = FDDQNAgent(state_dim, action_dim, device=device, hyperparams=hyperparams)
-            fddqn_agent.train_agent(env=env)
-            # fddqn_agent.test_agent(env=env, n_episodes=3)
-
-    # Start the sweep agent to run the training function for each configuration
-    wandb.agent(sweep_id, function=train_sweep, count=10)  # Adjust count as needed for the number of runs

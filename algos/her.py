@@ -73,7 +73,7 @@ class ReplayBuffer:
 
 # --- HER Agent ---
 class HERAgent(torch_nn.Module):
-    def __init__(self, state_dim, action_dim, hyperparams={}, device="cpu"):
+    def __init__(self, state_dim, action_dim, percept=False, hyperparams={}, device="cpu"):
         super(HERAgent, self).__init__()
 
         self.LR_ACTOR = hyperparams.get("LR_ACTOR", 1e-3)
@@ -81,8 +81,9 @@ class HERAgent(torch_nn.Module):
         self.GAMMA = hyperparams.get("GAMMA", 0.98)            # Discount factor
         self.TAU = hyperparams.get("TAU", 0.05)             # Soft update parameter for target networks
         self.BATCH_SIZE = hyperparams.get("BATCH_SIZE", 128)         # Mini-batch size
-        self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 1000)     # Maximum number of episodes to train
-        self.EXPLORATION_NOISE = hyperparams.get("EXPLORATION_NOISE", 0.1) # Standard deviation of Gaussian noise for exploration
+        # self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 1000)     # Maximum number of episodes to train
+        self.MAX_ENV_STEPS = hyperparams.get("MAX_ENV_STEPS", 1e6)      # Maximum number of steps per episode
+        self.EXPLORATION_NOISE = hyperparams.get("EXPL_NOISE_WORKER", 0.1) # Standard deviation of Gaussian noise for exploration
         self.RANDOM_START_STEPS = hyperparams.get("RANDOM_START_STEPS", 1000)    # Number of random steps to populate the replay buffer before training
         self.MAX_ACTION = hyperparams.get("MAX_ACTION", 5.0)          # Maximum action value (-x, x) for continuous action spaces
         self.BUFFER_SIZE = hyperparams.get("BUFFER_SIZE", int(1e6))  # Replay buffer size
@@ -91,9 +92,9 @@ class HERAgent(torch_nn.Module):
         self.ALPHA = hyperparams.get("ALPHA", 0)                   # Weight for the HER loss term
 
         self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
-        self.save_weights = hyperparams.get("SAVE_WEIGHTS", False)
+        self.save_weights = hyperparams.get("SAVE_MODEL", False)
 
-        goal_dim = 3  # Assuming the goal is represented in the same space as the state
+        goal_dim = hyperparams.get("GOAL_DIM", state_dim)  # Assuming the goal is represented in the same space as the state
 
         self.actor = Actor(state_dim+goal_dim, action_dim, self.MAX_ACTION).to(device)
         self.actor_target = Actor(state_dim+goal_dim, action_dim, self.MAX_ACTION).to(device)
@@ -141,7 +142,7 @@ class HERAgent(torch_nn.Module):
         # achieved_goal = achieved_goal[:-10]
         distance = np.linalg.norm(achieved_goal - desired_goal)
         if distance > self.GOAL_THRESHOLD:  # Threshold for considering the goal achieved
-            return -1.0 * self.ALPHA # Penalty for not achieving the goal
+            return -1.0 # Penalty for not achieving the goal
         else:
             # return -distance  # Negative reward proportional to the distance to the goal
             return 0.0
@@ -167,18 +168,18 @@ class HERAgent(torch_nn.Module):
         else:
             raise ValueError("Invalid goal sampling type.")
 
-    def train_agent(self, env, hyperparams=None):
+    def train_agent(self, env, hyperparams=None, store_episode_rewards=False):
 
         env_name = env.spec.id
+        model_path = None
 
         if env.action_space.__class__.__name__ == "Discrete":
             print("Discrete action space detected. DDPG is not suitable for discrete action spaces.")
             # return
 
-        actor_weights_path = f"Weights/{env_name}_HER_weights/actor_weights_{self.MAX_EPISODES}.pt"
-        critic_weights_path = f"Weights/{env_name}_HER_weights/critic_weights_{self.MAX_EPISODES}.pt"
-
-        os.makedirs(f"Weights/{env_name}_HER_weights", exist_ok=True)
+        if self.save_weights:
+            model_path = f"Weights/{env_name}_HER_weights/alr_{self.LR_ACTOR}_clr_{self.LR_CRITIC}_{self.MAX_ENV_STEPS}_alpha_{self.ALPHA}"
+            os.makedirs(model_path, exist_ok=True)
 
         if self.wandb_upload:
             # Start a new wandb run to track this script.
@@ -195,111 +196,144 @@ class HERAgent(torch_nn.Module):
                     "gamma": self.GAMMA,
                     "tau": self.TAU,
                     "batch_size": self.BATCH_SIZE,
-                    "max_episodes": self.MAX_EPISODES,
+                    "max_env_steps": self.MAX_ENV_STEPS,
                     "exploration_noise": self.EXPLORATION_NOISE,
                     "random_start_steps": self.RANDOM_START_STEPS,
                     "buffer_size": self.BUFFER_SIZE,
                     "goal_threshold": self.GOAL_THRESHOLD,
                     "num_updates": self.NUM_UPDATES,
                     "alpha": self.ALPHA,
-                    "actor_weights_path": actor_weights_path,
-                    "critic_weights_path": critic_weights_path,
+                    "model_path": model_path,
                     "trainable_params": self.trainable_params,
                     "total_params": self.total_params,
                     "total_unique_params": self.total_unique_params
                 },
             )
-            run.name=f"{env_name}_actor_lr_{self.LR_ACTOR}_critic_lr_{self.LR_CRITIC}_episodes_{self.MAX_EPISODES}_alpha_{self.ALPHA}"
+            run.name=f"{env_name}_actor_lr_{self.LR_ACTOR}_critic_lr_{self.LR_CRITIC}_episodes_{self.MAX_ENV_STEPS}_alpha_{self.ALPHA}"
 
         # create a wrapper environment to save episode returns and episode lengths
         # create a wrapper environment to save episode returns and episode lengths
         # envs_wrapper = gym.wrappers.vector.RecordEpisodeStatistics(
         #     envs, buffer_length=n_envs * n_updates
         # )
+        env_steps = 0
+        episode_rewards = []
 
-        obs, desired_goal, achieved_goal, _ = env.reset()
+        # obs, desired_goal, achieved_goal, _ = env.reset(seed=SEED)
+        obs, info = env.reset(seed=SEED)
+        desired_goal = info.get('desired_goal', env.observation_space.sample())  # Sample a random goal if not provided
+        achieved_goal = info.get('achieved_goal', obs) 
         # print(f"Initial Observation: {obs}, Desired Goal: {desired_goal}, Achieved Goal: {achieved_goal}")
         for i in tqdm(range(self.RANDOM_START_STEPS)):
             action = env.action_space.sample()
-            next_obs, desired_goal, achieved_goal, reward, terminated, truncated, info = env.step(action)
+            # next_obs, desired_goal, achieved_goal, reward, terminated, truncated, info = env.step(action)
+            next_obs, reward, terminated, truncated, info = env.step(action)
+            desired_goal = info.get('desired_goal', env.observation_space.sample())  # Sample a random goal if not provided
+            achieved_goal = info.get('achieved_goal', next_obs)
+            env_steps += 1
             done = terminated or truncated
             goal = (desired_goal, achieved_goal)  # Use the desired goal from the environment as the goal
             self.replay_buffer.add(obs, action, reward, next_obs, float(done), desired_goal)
             obs = next_obs
             if done:
-                obs, desired_goal, achieved_goal, _ = env.reset()
+                obs, info = env.reset(seed=SEED)
+                desired_goal = info.get('desired_goal', env.observation_space.sample())  # Sample a random goal if not provided
+                achieved_goal = info.get('achieved_goal', obs)
 
-        for episode in tqdm(range(self.MAX_EPISODES)):
-            obs, desired_goal, achieved_goal, _ = env.reset()
-            episode_reward = 0
-            episode_length = 0
-            done = False
-            # goal = env.observation_space.sample()[:-10]  # Sample a random goal from the observation space
-            goal = (desired_goal, achieved_goal)  # Use the desired goal from the environment as the goal
-            current_episode_transitions = []  # Store transitions for the current episode
-            
-            while not done:
-                # Select action with noise for exploration
-                action = self.select_action(obs, goal[0], noise_std=self.EXPLORATION_NOISE)
-                
-                # Step environment
-                next_obs, desired_goal, achieved_goal, reward, terminated, truncated, info = env.step(action)
-                done = terminated or truncated
+        with tqdm(total=self.MAX_ENV_STEPS, desc="Training Progress") as pbar:
+            while env_steps < self.MAX_ENV_STEPS:
+                # obs, desired_goal, achieved_goal, _ = env.reset(seed=SEED+env_steps)
+                obs, info = env.reset(seed=SEED+env_steps)
+                desired_goal = info.get('desired_goal', env.observation_space.sample())  # Sample a random goal if not provided
+                achieved_goal = info.get('achieved_goal', obs)
+                episode_reward = 0
+                episode_length = 0
+                done = False
+                # goal = env.observation_space.sample()[:-10]  # Sample a random goal from the observation space
                 goal = (desired_goal, achieved_goal)  # Use the desired goal from the environment as the goal
-
-                # r_g = self.compute_her_reward(next_obs, goal)  # Compute HER reward based on the achieved goal and desired goal
-                # r = reward + r_g  # Combine the original reward and HER reward with a weight alpha
-                current_episode_transitions.append((obs, action, reward, next_obs, float(done), achieved_goal))  # Store transition for HER
+                current_episode_transitions = []  # Store transitions for the current episode
                 
-                # Store experience
-                self.replay_buffer.add(obs, action, reward, next_obs, float(done), desired_goal)
+                while not done:
+                    # Select action with noise for exploration
+                    action = self.select_action(obs, goal[0], noise_std=self.EXPLORATION_NOISE)
+                    
+                    # Step environment
+                    next_obs, reward, terminated, truncated, info = env.step(action)
+                    done = terminated or truncated
+                    desired_goal = info.get('desired_goal', env.observation_space.sample())  # Sample a random goal if not provided
+                    achieved_goal = info.get('achieved_goal', next_obs)
+                    goal = (desired_goal, achieved_goal)  # Use the desired goal from the environment as the goal
 
-                obs = next_obs
-                episode_reward += reward
-                episode_length += 1
+                    r_g = self.compute_her_reward(next_obs, goal)  # Compute HER reward based on the achieved goal and desired goal
+                    
+                    current_episode_transitions.append((obs, action, reward, next_obs, float(done), achieved_goal))  # Store transition for HER
 
-                self.ddpg_update()  # Update the agent after each step
+                    r = self.ALPHA*reward + r_g  # Combine the original reward and HER reward with a weight alpha
+                    # Store experience
+                    self.replay_buffer.add(obs, action, r, next_obs, float(done), desired_goal)
 
-            if self.wandb_upload:
-                wandb.log({
-                    "episode_reward": episode_reward,
-                    "episode_length": episode_length,
-                })
+                    obs = next_obs
+                    episode_reward += reward
+                    episode_length += 1
+                    env_steps += 1
+                    
+                    if self.wandb_upload:
+                        wandb.log({
+                            "env_steps": env_steps,
+                        })
+                    self.ddpg_update()  # Update the agent after each step
 
-            # next_obs_history = [trans[3] for trans in current_episode_transitions]  # Extract next observations from the transitions
-            achieved_goal_history = [trans[-1] for trans in current_episode_transitions]  # Extract achieved goals from the transitions
-            for t in range(len(current_episode_transitions)):
-                goals = self.sample_goals(achieved_goal_history, t, type="future", k=4)
-                # print("sampled goals:", goals)
-                for goal in goals:
-                    # print("achieved_goal_history[t]:", achieved_goal_history[t], "goal:", goal)
-                    r_g = self.compute_her_reward(achieved_goal_history[t], goal)  # Compute HER reward based on the achieved goal and sampled goal
-                    r = current_episode_transitions[t][2] + r_g  # Combine the original reward and HER reward with a weight alpha
-                    # print(f"done: {current_episode_transitions[t][4]}, r: {r}, goal: {goal}")
-                    self.replay_buffer.add(current_episode_transitions[t][0], current_episode_transitions[t][1], r, current_episode_transitions[t][3], current_episode_transitions[t][4], goal)
+                    if self.save_weights and env_steps % 10000 == 0:
+                        torch.save(self.state_dict(), f"{model_path}/model.pt")
 
-            # Update the agent after each episode
-            # for i in range(self.NUM_UPDATES):
-            #     self.ddpg_update()
+                if self.wandb_upload:
+                    wandb.log({
+                        "episode_reward": episode_reward,
+                        "episode_length": episode_length,
+                    })
+
+                # next_obs_history = [trans[3] for trans in current_episode_transitions]  # Extract next observations from the transitions
+                achieved_goal_history = [trans[-1] for trans in current_episode_transitions]  # Extract achieved goals from the transitions
+                for t in range(len(current_episode_transitions)):
+                    goals = self.sample_goals(achieved_goal_history, t, type="future", k=4)
+                    # print("sampled goals:", goals)
+                    for goal in goals:
+                        # print("achieved_goal_history[t]:", achieved_goal_history[t], "goal:", goal)
+                        r_g = self.compute_her_reward(achieved_goal_history[t], goal)  # Compute HER reward based on the achieved goal and sampled goal
+                        r = self.ALPHA * current_episode_transitions[t][2] + r_g  # Combine the original reward and HER reward with a weight alpha
+                        # print(f"done: {current_episode_transitions[t][4]}, r: {r}, goal: {goal}")
+                        self.replay_buffer.add(current_episode_transitions[t][0], current_episode_transitions[t][1], r, current_episode_transitions[t][3], current_episode_transitions[t][4], goal)
+
+                # Update the agent after each episode
+                # for i in range(self.NUM_UPDATES):
+                #     self.ddpg_update()
+
+                if store_episode_rewards:
+                    episode_rewards.append(episode_reward)
+                    if len(episode_rewards) > 50:
+                        episode_rewards.pop(0)  # Keep only the last 50 episode rewards
+                        avg_reward = np.mean(episode_rewards)
+                        if self.wandb_upload:
+                            wandb.log({
+                                "avg_reward_last_50": avg_reward,
+                            })
+
+
+                pbar.update(episode_length)
 
         if self.wandb_upload:
             run.finish()
 
-        """ save network weights """
-        if self.save_weights:
-            torch.save(self.actor.state_dict(), actor_weights_path)
-            torch.save(self.critic.state_dict(), critic_weights_path)
 
-    def test_agent(self, env, n_episodes=1):
+    def test_agent(self, env, n_episodes=1, model_path=None):
 
         env_name = env.spec.id
 
-        actor_weights_path = f"Weights/{env_name}_HER_weights/actor_weights_{self.MAX_EPISODES}.pt"
-        critic_weights_path = f"Weights/{env_name}_HER_weights/critic_weights_{self.MAX_EPISODES}.pt"
+        if model_path is None:
+            model_path = f"Weights/{env_name}_HER_weights/alr_{self.LR_ACTOR}_clr_{self.LR_CRITIC}_{self.MAX_ENV_STEPS}_alpha_{self.ALPHA}"
 
-        if os.path.exists(actor_weights_path) and os.path.exists(critic_weights_path):
-            self.actor.load_state_dict(torch.load(actor_weights_path, map_location=self.device))
-            self.critic.load_state_dict(torch.load(critic_weights_path, map_location=self.device))
+        if os.path.exists(model_path):
+            self.load_state_dict(torch.load(f"{model_path}/model.pt", map_location=self.device))
         else:
             print("Weights not found. Please train the agent first.")
             return
@@ -316,13 +350,8 @@ class HERAgent(torch_nn.Module):
                     # Track hyperparameters and run metadata.
                     config={
                         "env": env_name,
-                        "actor_lr": self.LR_ACTOR,
-                        "critic_lr": self.LR_CRITIC,
-                        "gamma": self.GAMMA,
-                        "tau": self.TAU,
-                        "batch_size": self.BATCH_SIZE,
-                        "max_episodes": self.MAX_EPISODES,
-                        "exploration_noise": self.EXPLORATION_NOISE
+                        "architecture": "HER",
+                        "model_path": model_path,
                     },
                 )
                 run.name = f"HER_Test_Episode_{episode + 1}"

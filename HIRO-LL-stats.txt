@@ -1,0 +1,84 @@
+Environment: LunarLanderContinuous-v3	Agent: HIROAgent	n_episodes: 200
+--------------------------------------------------------------------------------
+Average Reward: 27.560509535402307	Average Length: 178.33
+Standard Deviation Reward: 83.1405402895832	Standard Deviation Length: 219.30629516728422
+Coefficient of Variation Reward: 3.0166546878528013	Coefficient of Variation Length: 1.2297779126747277
+Std Error Reward: 5.878923983027764	Std Error Length: 15.507296846968524
+95% Confidence Interval Reward: 11.522691006734417	95% Confidence Interval Length: 30.394301820058306
+95% confidence interval as % of mean reward: 41.81%
+95% confidence interval as % of mean length: 17.04%
+5th Percentile Reward: -37.22678114957949	95th Percentile Reward: 237.01645877082964
+5th Percentile Length: 82.95	95th Percentile Length: 814.9499999999983
+Range of Rewards (5th-95th Percentile): 274.2432399204091
+Range of Lengths (5th-95th Percentile): 731.9999999999983
+--------------------------------------------------------------------------------
+Environment: LunarLanderContinuous-v3-delay-act-1	Agent: HIROAgent	n_episodes: 200
+--------------------------------------------------------------------------------
+Average Reward: 29.277522310206024	Average Length: 170.53
+Standard Deviation Reward: 72.4024515636178	Standard Deviation Length: 211.9138011079033
+Coefficient of Variation Reward: 2.4729705880329433	Coefficient of Variation Length: 1.2426775412414433
+Std Error Reward: 5.1196264475164694	Std Error Length: 14.984568579041573
+95% Confidence Interval Reward: 10.03446783713228	95% Confidence Interval Length: 29.369754414921484
+95% confidence interval as % of mean reward: 34.27%
+95% confidence interval as % of mean length: 17.22%
+5th Percentile Reward: -28.929653176441583	95th Percentile Reward: 187.65276765154195
+5th Percentile Length: 79.95	95th Percentile Length: 877.4499999999978
+Range of Rewards (5th-95th Percentile): 216.58242082798353
+Range of Lengths (5th-95th Percentile): 797.4999999999977
+--------------------------------------------------------------------------------
+Environment: LunarLanderContinuous-v3-delay-act-2	Agent: HIROAgent	n_episodes: 200
+--------------------------------------------------------------------------------
+Average Reward: 46.46856961022139	Average Length: 220.435
+Standard Deviation Reward: 104.07586798185632	Standard Deviation Length: 266.1564310231861
+Coefficient of Variation Reward: 2.2397045756915968	Coefficient of Variation Length: 1.2074145712939692
+Std Error Reward: 7.359275200784648	Std Error Length: 18.820101723290446
+95% Confidence Interval Reward: 14.424179393537909	95% Confidence Interval Length: 36.887399377649274
+95% confidence interval as % of mean reward: 31.04%
+95% confidence interval as % of mean length: 16.73%
+5th Percentile Reward: -39.83144550546767	95th Percentile Reward: 262.58329624102373
+5th Percentile Length: 79.95	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 302.4147417464914
+Range of Lengths (5th-95th Percentile): 920.05
+--------------------------------------------------------------------------------
+Environment: LunarLanderContinuous-v3-delay-act-4	Agent: HIROAgent	n_episodes: 200
+--------------------------------------------------------------------------------
+Average Reward: 19.425602801733994	Average Length: 120.405
+Standard Deviation Reward: 81.96657331729689	Standard Deviation Length: 107.90542606838638
+Coefficient of Variation Reward: 4.219512472991586	Coefficient of Variation Length: 0.8961872519279629
+Std Error Reward: 5.795911982328495	Std Error Length: 7.630065849977966
+95% Confidence Interval Reward: 11.35998748536385	95% Confidence Interval Length: 14.954929065956813
+95% confidence interval as % of mean reward: 58.48%
+95% confidence interval as % of mean length: 12.42%
+5th Percentile Reward: -47.71680587871849	95th Percentile Reward: 239.4272393507291
+5th Percentile Length: 77.0	95th Percentile Length: 193.34999999999988
+Range of Rewards (5th-95th Percentile): 287.1440452294476
+Range of Lengths (5th-95th Percentile): 116.34999999999988
+--------------------------------------------------------------------------------
+Environment: LunarLanderContinuous-v3-delay-act-8	Agent: HIROAgent	n_episodes: 200
+--------------------------------------------------------------------------------
+Average Reward: -70.4716602093177	Average Length: 118.335
+Standard Deviation Reward: 114.83362714269444	Standard Deviation Length: 93.60386089793518
+Coefficient of Variation Reward: 1.6295008064463228	Coefficient of Variation Length: 0.7910074018501304
+Std Error Reward: 8.119963646084681	Std Error Length: 6.618792478617228
+95% Confidence Interval Reward: 15.915128746325975	95% Confidence Interval Length: 12.972833258089766
+95% confidence interval as % of mean reward: 22.58%
+95% confidence interval as % of mean length: 10.96%
+5th Percentile Reward: -256.47495111122845	95th Percentile Reward: 62.31287160600727
+5th Percentile Length: 66.9	95th Percentile Length: 285.54999999999984
+Range of Rewards (5th-95th Percentile): 318.7878227172357
+Range of Lengths (5th-95th Percentile): 218.64999999999984
+--------------------------------------------------------------------------------
+Environment: LunarLanderContinuous-v3-delay-act-16	Agent: HIROAgent	n_episodes: 200
+--------------------------------------------------------------------------------
+Average Reward: -252.2370434380607	Average Length: 93.92
+Standard Deviation Reward: 114.46179215844245	Standard Deviation Length: 23.918060122008225
+Coefficient of Variation Reward: 0.45378660722587194	Coefficient of Variation Length: 0.25466418358185927
+Std Error Reward: 8.093670942199985	Std Error Length: 1.6912622505099557
+95% Confidence Interval Reward: 15.863595046711971	95% Confidence Interval Length: 3.314874010999513
+95% confidence interval as % of mean reward: 6.29%
+95% confidence interval as % of mean length: 3.53%
+5th Percentile Reward: -444.7980355418497	95th Percentile Reward: -65.85817827372823
+5th Percentile Length: 57.95	95th Percentile Length: 135.04999999999998
+Range of Rewards (5th-95th Percentile): 378.93985726812144
+Range of Lengths (5th-95th Percentile): 77.09999999999998
+--------------------------------------------------------------------------------

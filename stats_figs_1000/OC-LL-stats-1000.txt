@@ -1,0 +1,322 @@
+Environment: LunarLander-v3	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: 94.97942138311036	Average Length: 713.121
+Standard Deviation Reward: 114.14200406630948	Standard Deviation Length: 284.03058701308913
+Coefficient of Variation Reward: 1.2017551002538187	Coefficient of Variation Length: 0.3982922772055361
+Std Error Reward: 3.609487095457388	Std Error Length: 8.981835801160027
+95% Confidence Interval Reward: 7.07459470709648	95% Confidence Interval Length: 17.604398170273655
+95% confidence interval as % of mean reward: 7.45%
+95% confidence interval as % of mean length: 2.47%
+5th Percentile Reward: -89.69403599637535	95th Percentile Reward: 246.19910841609345
+5th Percentile Length: 257.95	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 335.8931444124688
+Range of Lengths (5th-95th Percentile): 742.05
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-delay-obs-1	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: 99.65137847031636	Average Length: 674.381
+Standard Deviation Reward: 112.38905675683482	Standard Deviation Length: 300.06644237401827
+Coefficient of Variation Reward: 1.1278223992687937	Coefficient of Variation Length: 0.4449509140589938
+Std Error Reward: 3.554054034295348	Std Error Length: 9.488934072855603
+95% Confidence Interval Reward: 6.965945907218882	95% Confidence Interval Length: 18.598310782796982
+95% confidence interval as % of mean reward: 6.99%
+95% confidence interval as % of mean length: 2.76%
+5th Percentile Reward: -85.73929234827678	95th Percentile Reward: 252.19490030951695
+5th Percentile Length: 235.85000000000002	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 337.93419265779374
+Range of Lengths (5th-95th Percentile): 764.15
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-delay-obs-2	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: 98.63357052975067	Average Length: 637.707
+Standard Deviation Reward: 121.38933982195893	Standard Deviation Length: 323.1473984902246
+Coefficient of Variation Reward: 1.2307101848791377	Coefficient of Variation Length: 0.5067333406881602
+Std Error Reward: 3.8386679750156856	Std Error Length: 10.218817991871664
+95% Confidence Interval Reward: 7.523789231030744	95% Confidence Interval Length: 20.02888326406846
+95% confidence interval as % of mean reward: 7.63%
+95% confidence interval as % of mean length: 3.14%
+5th Percentile Reward: -121.90109068304217	95th Percentile Reward: 256.944462512348
+5th Percentile Length: 183.0	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 378.8455531953902
+Range of Lengths (5th-95th Percentile): 817.0
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-delay-obs-4	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: 39.65732713515758	Average Length: 362.097
+Standard Deviation Reward: 129.30432304970594	Standard Deviation Length: 313.89124484604537
+Coefficient of Variation Reward: 3.2605405454840457	Coefficient of Variation Length: 0.8668706033080787
+Std Error Reward: 4.088961721432804	Std Error Length: 9.926112712990923
+95% Confidence Interval Reward: 8.014364974008295	95% Confidence Interval Length: 19.455180917462208
+95% confidence interval as % of mean reward: 20.21%
+95% confidence interval as % of mean length: 5.37%
+5th Percentile Reward: -185.50351288010398	95th Percentile Reward: 257.6104903356339
+5th Percentile Length: 99.0	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 443.1140032157379
+Range of Lengths (5th-95th Percentile): 901.0
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-delay-obs-8	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: -104.18286553639882	Average Length: 143.589
+Standard Deviation Reward: 104.9860666019354	Standard Deviation Length: 137.07552691490923
+Coefficient of Variation Reward: 1.007709531326492	Coefficient of Variation Length: 0.9546380775331622
+Std Error Reward: 3.3199509304424994	Std Error Length: 4.334708765188269
+95% Confidence Interval Reward: 6.507103823667299	95% Confidence Interval Length: 8.496029179769007
+95% confidence interval as % of mean reward: 6.25%
+95% confidence interval as % of mean length: 5.92%
+5th Percentile Reward: -276.7529186426439	95th Percentile Reward: 36.92271934900367
+5th Percentile Length: 69.0	95th Percentile Length: 235.04999999999995
+Range of Rewards (5th-95th Percentile): 313.6756379916476
+Range of Lengths (5th-95th Percentile): 166.04999999999995
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-delay-obs-16	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: -216.56885373427855	Average Length: 83.202
+Standard Deviation Reward: 135.03297742538405	Standard Deviation Length: 29.779509666883374
+Coefficient of Variation Reward: 0.6235106068902418	Coefficient of Variation Length: 0.3579181950780435
+Std Error Reward: 4.270117678983131	Std Error Length: 0.9417107815035359
+95% Confidence Interval Reward: 8.369430650806937	95% Confidence Interval Length: 1.8457531317469305
+95% confidence interval as % of mean reward: 3.86%
+95% confidence interval as % of mean length: 2.22%
+5th Percentile Reward: -476.6742283770712	95th Percentile Reward: -81.19203805111285
+5th Percentile Length: 60.0	95th Percentile Length: 113.04999999999995
+Range of Rewards (5th-95th Percentile): 395.48219032595836
+Range of Lengths (5th-95th Percentile): 53.049999999999955
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-delay-obs-32	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: -354.29008571857946	Average Length: 68.054
+Standard Deviation Reward: 107.54075215277393	Standard Deviation Length: 11.927828134241373
+Coefficient of Variation Reward: 0.30353870031292934	Coefficient of Variation Length: 0.17527005222678127
+Std Error Reward: 3.4007371809042155	Std Error Length: 0.37719104443239376
+95% Confidence Interval Reward: 6.6654448745722625	95% Confidence Interval Length: 0.7392944470874918
+95% confidence interval as % of mean reward: 1.88%
+95% confidence interval as % of mean length: 1.09%
+5th Percentile Reward: -526.4438140912096	95th Percentile Reward: -154.11981664279148
+5th Percentile Length: 52.0	95th Percentile Length: 88.0
+Range of Rewards (5th-95th Percentile): 372.3239974484181
+Range of Lengths (5th-95th Percentile): 36.0
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-delay-act-1	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: 100.89794166085501	Average Length: 690.149
+Standard Deviation Reward: 113.5955123214414	Standard Deviation Length: 301.1936300770652
+Coefficient of Variation Reward: 1.1258456857649914	Coefficient of Variation Length: 0.43641826631215175
+Std Error Reward: 3.5922055090947604	Std Error Length: 9.524578877777222
+95% Confidence Interval Reward: 7.0407227978257305	95% Confidence Interval Length: 18.668174600443354
+95% confidence interval as % of mean reward: 6.98%
+95% confidence interval as % of mean length: 2.70%
+5th Percentile Reward: -82.22732590747866	95th Percentile Reward: 253.35339925255627
+5th Percentile Length: 235.0	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 335.58072516003494
+Range of Lengths (5th-95th Percentile): 765.0
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-delay-act-2	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: 104.80106847751152	Average Length: 631.478
+Standard Deviation Reward: 121.4022536338921	Standard Deviation Length: 319.87769774712336
+Coefficient of Variation Reward: 1.158406640290532	Coefficient of Variation Length: 0.5065539856449843
+Std Error Reward: 3.8390763456055246	Std Error Length: 10.115420975718214
+95% Confidence Interval Reward: 7.524589637386828	95% Confidence Interval Length: 19.8262251124077
+95% confidence interval as % of mean reward: 7.18%
+95% confidence interval as % of mean length: 3.14%
+5th Percentile Reward: -104.40538456500046	95th Percentile Reward: 256.1129569098229
+5th Percentile Length: 163.0	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 360.5183414748234
+Range of Lengths (5th-95th Percentile): 837.0
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-delay-act-4	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: 43.773924772353844	Average Length: 343.173
+Standard Deviation Reward: 131.17865050306577	Standard Deviation Length: 300.0719498237048
+Coefficient of Variation Reward: 2.996730386531706	Coefficient of Variation Length: 0.874404308683098
+Std Error Reward: 4.148233159768804	Std Error Length: 9.489108233706686
+95% Confidence Interval Reward: 8.130536993146855	95% Confidence Interval Length: 18.598652138065106
+95% confidence interval as % of mean reward: 18.57%
+95% confidence interval as % of mean length: 5.42%
+5th Percentile Reward: -173.7568731964167	95th Percentile Reward: 261.05889588645084
+5th Percentile Length: 102.9	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 434.8157690828675
+Range of Lengths (5th-95th Percentile): 897.1
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-delay-act-8	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: -83.91062612739857	Average Length: 145.129
+Standard Deviation Reward: 110.82918264437227	Standard Deviation Length: 137.6230081018432
+Coefficient of Variation Reward: 1.3208003295804776	Coefficient of Variation Length: 0.9482805511086221
+Std Error Reward: 3.504726483710195	Std Error Length: 4.352021640456306
+95% Confidence Interval Reward: 6.869263908071981	95% Confidence Interval Length: 8.52996241529436
+95% confidence interval as % of mean reward: 8.19%
+95% confidence interval as % of mean length: 5.88%
+5th Percentile Reward: -255.76584684529098	95th Percentile Reward: 149.38362168022286
+5th Percentile Length: 70.0	95th Percentile Length: 272.3499999999997
+Range of Rewards (5th-95th Percentile): 405.14946852551384
+Range of Lengths (5th-95th Percentile): 202.34999999999968
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-delay-act-16	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: -203.2746655444933	Average Length: 83.431
+Standard Deviation Reward: 129.5045405374938	Standard Deviation Length: 16.4278799301675
+Coefficient of Variation Reward: 0.637091396464	Coefficient of Variation Length: 0.19690378792256474
+Std Error Reward: 4.095293154320869	Std Error Length: 0.5194951770709716
+95% Confidence Interval Reward: 8.026774582468903	95% Confidence Interval Length: 1.0182105470591043
+95% confidence interval as % of mean reward: 3.95%
+95% confidence interval as % of mean length: 1.22%
+5th Percentile Reward: -446.30237587500045	95th Percentile Reward: -24.691045601299926
+5th Percentile Length: 61.0	95th Percentile Length: 110.0
+Range of Rewards (5th-95th Percentile): 421.6113302737005
+Range of Lengths (5th-95th Percentile): 49.0
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-delay-act-32	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: -185.8349316545049	Average Length: 72.574
+Standard Deviation Reward: 100.44142348251847	Standard Deviation Length: 15.852398052029857
+Coefficient of Variation Reward: 0.5404873162880603	Coefficient of Variation Length: 0.21843081616046872
+Std Error Reward: 3.1762366963427984	Std Error Length: 0.5012968422003076
+95% Confidence Interval Reward: 6.225423924831885	95% Confidence Interval Length: 0.9825418107126028
+95% confidence interval as % of mean reward: 3.35%
+95% confidence interval as % of mean length: 1.35%
+5th Percentile Reward: -366.58059791224696	95th Percentile Reward: -48.84938024882693
+5th Percentile Length: 54.0	95th Percentile Length: 91.0
+Range of Rewards (5th-95th Percentile): 317.73121766342
+Range of Lengths (5th-95th Percentile): 37.0
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-noise-obs-0.01	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: 10.845498157688928	Average Length: 549.047
+Standard Deviation Reward: 73.09513530235796	Standard Deviation Length: 397.1078578812059
+Coefficient of Variation Reward: 6.7396752311038	Coefficient of Variation Length: 0.7232675124009528
+Std Error Reward: 2.3114711343363163	Std Error Length: 12.557653076550572
+95% Confidence Interval Reward: 4.53048342329918	95% Confidence Interval Length: 24.61300003003912
+95% confidence interval as % of mean reward: 41.77%
+95% confidence interval as % of mean length: 4.48%
+5th Percentile Reward: -126.68877523906863	95th Percentile Reward: 115.72129029724441
+5th Percentile Length: 113.0	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 242.41006553631303
+Range of Lengths (5th-95th Percentile): 887.0
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-noise-obs-0.05	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: -119.7227757871382	Average Length: 122.799
+Standard Deviation Reward: 81.82483396681216	Standard Deviation Length: 80.49883601021818
+Coefficient of Variation Reward: 0.6834525296364085	Coefficient of Variation Length: 0.6555333187584441
+Std Error Reward: 2.587528445002369	Std Error Length: 2.5455967078467086
+95% Confidence Interval Reward: 5.0715557522046435	95% Confidence Interval Length: 4.989369547379549
+95% confidence interval as % of mean reward: 4.24%
+95% confidence interval as % of mean length: 4.06%
+5th Percentile Reward: -272.73003862434115	95th Percentile Reward: -11.005714893982654
+5th Percentile Length: 82.0	95th Percentile Length: 156.04999999999995
+Range of Rewards (5th-95th Percentile): 261.7243237303585
+Range of Lengths (5th-95th Percentile): 74.04999999999995
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-noise-obs-0.1	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: -217.14049768677435	Average Length: 106.269
+Standard Deviation Reward: 108.94921851825977	Standard Deviation Length: 53.32307792129032
+Coefficient of Variation Reward: 0.5017452740456516	Coefficient of Variation Length: 0.5017745336955304
+Std Error Reward: 3.4452767981309598	Std Error Length: 1.6862237808191411
+95% Confidence Interval Reward: 6.752742524336681	95% Confidence Interval Length: 3.3049986104055167
+95% confidence interval as % of mean reward: 3.11%
+95% confidence interval as % of mean length: 3.11%
+5th Percentile Reward: -384.98831392548476	95th Percentile Reward: -37.63640851988569
+5th Percentile Length: 72.0	95th Percentile Length: 140.0
+Range of Rewards (5th-95th Percentile): 347.35190540559904
+Range of Lengths (5th-95th Percentile): 68.0
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-noise-obs-0.2	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: -276.40638259762324	Average Length: 95.633
+Standard Deviation Reward: 128.24819367762615	Standard Deviation Length: 19.260122299715544
+Coefficient of Variation Reward: 0.46398419773223043	Coefficient of Variation Length: 0.20139619482517065
+Std Error Reward: 4.055563978237048	Std Error Length: 0.609058544805013
+95% Confidence Interval Reward: 7.948905397344614	95% Confidence Interval Length: 1.1937547478178254
+95% confidence interval as % of mean reward: 2.88%
+95% confidence interval as % of mean length: 1.25%
+5th Percentile Reward: -485.67710309097544	95th Percentile Reward: -72.3272441444014
+5th Percentile Length: 68.0	95th Percentile Length: 130.0
+Range of Rewards (5th-95th Percentile): 413.34985894657405
+Range of Lengths (5th-95th Percentile): 62.0
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-noise-obs-0.5	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: -299.478871617845	Average Length: 91.943
+Standard Deviation Reward: 143.56704943284893	Standard Deviation Length: 18.409936203039923
+Coefficient of Variation Reward: 0.479389576490892	Coefficient of Variation Length: 0.20023205902613492
+Std Error Reward: 4.539988731577876	Std Error Length: 0.5821732997999822
+95% Confidence Interval Reward: 8.898377913892636	95% Confidence Interval Length: 1.1410596676079652
+95% confidence interval as % of mean reward: 2.97%
+95% confidence interval as % of mean length: 1.24%
+5th Percentile Reward: -523.6691941575817	95th Percentile Reward: -68.14278532704667
+5th Percentile Length: 65.0	95th Percentile Length: 125.0
+Range of Rewards (5th-95th Percentile): 455.52640883053505
+Range of Lengths (5th-95th Percentile): 60.0
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-noise-act-0.01	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: 89.52419653020804	Average Length: 717.241
+Standard Deviation Reward: 111.70333517141967	Standard Deviation Length: 289.37758192195884
+Coefficient of Variation Reward: 1.2477446266019012	Coefficient of Variation Length: 0.4034593420091139
+Std Error Reward: 3.5323696137888123	Std Error Length: 9.150922626653555
+95% Confidence Interval Reward: 6.923444443026072	95% Confidence Interval Length: 17.93580834824097
+95% confidence interval as % of mean reward: 7.73%
+95% confidence interval as % of mean length: 2.50%
+5th Percentile Reward: -92.32219868548913	95th Percentile Reward: 244.52380823199206
+5th Percentile Length: 252.0	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 336.8460069174812
+Range of Lengths (5th-95th Percentile): 748.0
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-noise-act-0.05	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: 85.44022774122682	Average Length: 743.137
+Standard Deviation Reward: 110.23688261270468	Standard Deviation Length: 290.7274604006302
+Coefficient of Variation Reward: 1.2902222469090272	Coefficient of Variation Length: 0.3912165057057181
+Std Error Reward: 3.4859963121276003	Std Error Length: 9.193609532224
+95% Confidence Interval Reward: 6.8325527717700965	95% Confidence Interval Length: 18.01947468315904
+95% confidence interval as % of mean reward: 8.00%
+95% confidence interval as % of mean length: 2.42%
+5th Percentile Reward: -95.3778032433986	95th Percentile Reward: 245.159001920706
+5th Percentile Length: 248.95	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 340.53680516410463
+Range of Lengths (5th-95th Percentile): 751.05
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-noise-act-0.1	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: 79.82335031626563	Average Length: 763.205
+Standard Deviation Reward: 99.0248082984688	Standard Deviation Length: 300.94648523450144
+Coefficient of Variation Reward: 1.2405493869416113	Coefficient of Variation Length: 0.3943193312864845
+Std Error Reward: 3.131439390847042	Std Error Length: 9.516763471632569
+95% Confidence Interval Reward: 6.137621206060203	95% Confidence Interval Length: 18.652856404399834
+95% confidence interval as % of mean reward: 7.69%
+95% confidence interval as % of mean length: 2.44%
+5th Percentile Reward: -83.60900700388967	95th Percentile Reward: 231.8326682688473
+5th Percentile Length: 223.9	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 315.441675272737
+Range of Lengths (5th-95th Percentile): 776.1
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-noise-act-0.2	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: 48.56175968231406	Average Length: 729.158
+Standard Deviation Reward: 95.19118454612865	Standard Deviation Length: 352.32285341146974
+Coefficient of Variation Reward: 1.960208715023084	Coefficient of Variation Length: 0.4831913706103063
+Std Error Reward: 3.0102095633518813	Std Error Length: 11.141426885098694
+95% Confidence Interval Reward: 5.900010744169688	95% Confidence Interval Length: 21.83719669479344
+95% confidence interval as % of mean reward: 12.15%
+95% confidence interval as % of mean length: 2.99%
+5th Percentile Reward: -131.61443751636207	95th Percentile Reward: 164.84452423249078
+5th Percentile Length: 144.0	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 296.45896174885286
+Range of Lengths (5th-95th Percentile): 856.0
+--------------------------------------------------------------------------------
+Environment: LunarLander-v3-noise-act-0.5	Agent: OCAgent	n_episodes: 1000
+--------------------------------------------------------------------------------
+Average Reward: -41.63257649201876	Average Length: 177.975
+Standard Deviation Reward: 68.90283932881641	Standard Deviation Length: 200.28441370960448
+Coefficient of Variation Reward: 1.6550222238113355	Coefficient of Variation Length: 1.1253513904177805
+Std Error Reward: 2.1788990953168734	Std Error Length: 6.333549271538037
+95% Confidence Interval Reward: 4.270642226821072	95% Confidence Interval Length: 12.413756572214552
+95% confidence interval as % of mean reward: 10.26%
+95% confidence interval as % of mean length: 6.98%
+5th Percentile Reward: -192.9642797025307	95th Percentile Reward: 41.53230586904604
+5th Percentile Length: 80.0	95th Percentile Length: 1000.0
+Range of Rewards (5th-95th Percentile): 234.49658557157673
+Range of Lengths (5th-95th Percentile): 920.0
+--------------------------------------------------------------------------------
