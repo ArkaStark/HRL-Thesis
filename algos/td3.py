@@ -1,7 +1,7 @@
 import gymnasium as gym
 import numpy as np
 import torch
-import torch.nn as torch_nn
+import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import random
@@ -24,35 +24,78 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
 # --- Neural Networks ---
-class Actor(torch_nn.Module):
+# class Actor(torch_nn.Module):
+#     def __init__(self, state_dim, action_dim, max_action):
+#         super(Actor, self).__init__()
+#         self.fc1 = torch_nn.Linear(state_dim, 400)
+#         self.fc2 = torch_nn.Linear(400, 300)
+#         self.fc3 = torch_nn.Linear(300, action_dim)
+#         self.max_action = max_action
+
+#     def forward(self, state):
+#         x = F.relu(self.fc1(state))
+#         x = F.relu(self.fc2(x))
+#         # BipedalWalker actions are bounded between -1 and 1
+#         x = self.max_action * torch.tanh(self.fc3(x))
+#         return x
+
+# class Critic(torch_nn.Module):
+#     def __init__(self, state_dim, action_dim):
+#         super(Critic, self).__init__()
+#         # State and action are concatenated before passing into the first hidden layer
+#         self.fc1 = torch_nn.Linear(state_dim + action_dim, 400)
+#         self.fc2 = torch_nn.Linear(400, 300)
+#         self.fc3 = torch_nn.Linear(300, 1)
+
+#     def forward(self, state, action):
+#         x = torch.cat([state, action], dim=1)
+#         x = F.relu(self.fc1(x))
+#         x = F.relu(self.fc2(x))
+#         x = self.fc3(x)
+#         return x
+
+class Actor(nn.Module):
     def __init__(self, state_dim, action_dim, max_action):
         super(Actor, self).__init__()
-        self.fc1 = torch_nn.Linear(state_dim, 400)
-        self.fc2 = torch_nn.Linear(400, 300)
-        self.fc3 = torch_nn.Linear(300, action_dim)
+        self.net = nn.Sequential(
+            nn.Linear(state_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, action_dim)
+        )
         self.max_action = max_action
 
     def forward(self, state):
-        x = F.relu(self.fc1(state))
-        x = F.relu(self.fc2(x))
-        # BipedalWalker actions are bounded between -1 and 1
-        x = self.max_action * torch.tanh(self.fc3(x))
-        return x
+        return self.max_action * torch.tanh(self.net(state))
 
-class Critic(torch_nn.Module):
+class Critic(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(Critic, self).__init__()
-        # State and action are concatenated before passing into the first hidden layer
-        self.fc1 = torch_nn.Linear(state_dim + action_dim, 400)
-        self.fc2 = torch_nn.Linear(400, 300)
-        self.fc3 = torch_nn.Linear(300, 1)
+        # Q1 architecture
+        self.q1 = nn.Sequential(
+            nn.Linear(state_dim + action_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1)
+        )
+        # Q2 architecture
+        self.q2 = nn.Sequential(
+            nn.Linear(state_dim + action_dim, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, 1)
+        )
 
     def forward(self, state, action):
-        x = torch.cat([state, action], dim=1)
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
+        sa = torch.cat([state, action], 1)
+        return self.q1(sa), self.q2(sa)
+
+    def Q1(self, state, action):
+        sa = torch.cat([state, action], 1)
+        return self.q1(sa)
 
 # --- Replay Buffer ---
 class ReplayBuffer:
@@ -72,7 +115,7 @@ class ReplayBuffer:
         return len(self.buffer)
 
 # --- TD3 Agent ---
-class TD3Agent(torch_nn.Module):
+class TD3Agent(nn.Module):
     def __init__(self, state_dim, action_dim, percept=False, device="cpu", hyperparams={}):
         super(TD3Agent, self).__init__()
         self.action_dim = action_dim
@@ -85,7 +128,7 @@ class TD3Agent(torch_nn.Module):
         self.TAU = hyperparams.get("TAU", 0.005)             # Soft update parameter for target networks
         self.BATCH_SIZE = hyperparams.get("BATCH_SIZE", 64)         # Mini-batch size
         # self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 5000)     # Maximum number of episodes to train
-        self.EXPLORATION_NOISE = hyperparams.get("EXPLORATION_NOISE", 0.1) # Standard deviation of Gaussian noise for exploration
+        self.EXPLORATION_NOISE = hyperparams.get("EXPL_NOISE_WORKER", 0.1) # Standard deviation of Gaussian noise for exploration
         self.RANDOM_START_STEPS = hyperparams.get("RANDOM_START_STEPS", 1000)    # Number of random steps to populate the replay buffer before training
         self.UPDATE_DELAY = hyperparams.get("UPDATE_DELAY", 2)          # Number of critic updates per actor update
         self.BUFFER_SIZE = hyperparams.get("BUFFER_SIZE", int(1e6))  # Replay buffer size
@@ -96,18 +139,22 @@ class TD3Agent(torch_nn.Module):
         self.save_model = hyperparams.get("SAVE_MODEL", False)
             
 
-        self.actor = Actor(state_dim, action_dim, self.MAX_ACTION).to(device)
-        self.actor_target = Actor(state_dim, action_dim, self.MAX_ACTION).to(device)
+        self.actor = Actor(state_dim, action_dim, self.MAX_ACTION).to(self.device)
+        self.actor_target = Actor(state_dim, action_dim, self.MAX_ACTION).to(self.device)
         self.actor_target.load_state_dict(self.actor.state_dict())
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=self.LR_ACTOR)
 
-        self.critic1 = Critic(state_dim, action_dim).to(device)
-        self.critic2 = Critic(state_dim, action_dim).to(device)
-        self.critic1_target = Critic(state_dim, action_dim).to(device)
-        self.critic1_target.load_state_dict(self.critic1.state_dict())
-        self.critic2_target = Critic(state_dim, action_dim).to(device)
-        self.critic2_target.load_state_dict(self.critic2.state_dict())
-        self.critic_optimizer = optim.Adam(list(self.critic1.parameters()) + list(self.critic2.parameters()), lr=self.LR_CRITIC, weight_decay=1e-2)
+        self.critic = Critic(state_dim, action_dim).to(self.device)
+        self.critic_target = Critic(state_dim, action_dim).to(self.device)
+        self.critic_target.load_state_dict(self.critic.state_dict())
+        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=self.LR_CRITIC)
+
+        self.critic_target.eval()  # Set target critic to evaluation mode
+        self.actor_target.eval()   # Set target actor to evaluation mode
+        for param in self.critic_target.parameters():
+            param.requires_grad = False  # Freeze target critic parameters
+        for param in self.actor_target.parameters():
+            param.requires_grad = False  # Freeze target actor parameters
 
         self.replay_buffer = ReplayBuffer(int(self.BUFFER_SIZE))
 
@@ -146,17 +193,18 @@ class TD3Agent(torch_nn.Module):
             
         return action
 
-    def train_agent(self, env, store_episode_stats=False):
+    def train_agent(self, env, store_episode_rewards=False):
 
         env_name = env.spec.id
+        model_path = None
 
         if env.action_space.__class__.__name__ == "Discrete":
             print("Discrete action space detected. TD3 is not suitable for discrete action spaces.")
             # return
 
-        model_path = f"Weights/{env_name}_TD3_alr_{self.LR_ACTOR}_clr_{self.LR_CRITIC}_xx"
-
-        os.makedirs(model_path, exist_ok=True)
+        if self.save_model:
+            model_path = f"Weights/{env_name}_TD3/alr_{self.LR_ACTOR}_clr_{self.LR_CRITIC}_xxx"
+            os.makedirs(model_path, exist_ok=True)
 
         if self.wandb_upload:
             # Start a new wandb run to track this script.
@@ -169,6 +217,8 @@ class TD3Agent(torch_nn.Module):
                 config={
                     "env": env_name,
                     "algo": "TD3",
+                    "state_dim": self.state_dim,
+                    "action_dim": self.action_dim,
                     "actor_lr": self.LR_ACTOR,
                     "critic_lr": self.LR_CRITIC,
                     "gamma": self.GAMMA,
@@ -188,15 +238,10 @@ class TD3Agent(torch_nn.Module):
             )
             run.name = f"{env_name}_alr{self.LR_ACTOR}_clr{self.LR_CRITIC}"
 
-            # create a wrapper environment to save episode returns and episode lengths
-            # create a wrapper environment to save episode returns and episode lengths
-            # envs_wrapper = gym.wrappers.vector.RecordEpisodeStatistics(
-            #     envs, buffer_length=n_envs * n_updates
-            # )
-
-            critic_losses = []
-            actor_losses = []
-            entropies = []
+        load_model = False
+        if load_model:
+            load_path = f"Weights/Ant-v5-GC_TD3/alr_5e-05_clr_0.0003_xx/model.pt"
+            self.load_state_dict(torch.load(f"{load_path}", map_location=self.device))
 
         env_steps = 0
 
@@ -256,14 +301,12 @@ class TD3Agent(torch_nn.Module):
                         # Get predicted next-state actions and Q values from target models
                         with torch.no_grad():
                             target_actions = self.select_action(next_states, noise_std=self.EXPLORATION_NOISE, target=True)
-                            target_Q1 = self.critic1_target(next_states, target_actions)
-                            target_Q2 = self.critic2_target(next_states, target_actions)
+                            target_Q1, target_Q2 = self.critic_target(next_states, target_actions)
                             # Compute the target Q value
                             target_Q = rewards + (1 - dones) * self.GAMMA * torch.min(target_Q1, target_Q2)
 
                         # Get current Q estimate
-                        current_Q1 = self.critic1(states, actions)
-                        current_Q2 = self.critic2(states, actions)
+                        current_Q1, current_Q2 = self.critic(states, actions)
 
                         # Compute critic loss (MSE)
                         critic_loss = F.mse_loss(current_Q1, target_Q) + F.mse_loss(current_Q2, target_Q)
@@ -277,7 +320,7 @@ class TD3Agent(torch_nn.Module):
 
                             # ------------------- Optimize Actor ------------------- #
                             # Compute actor loss (Negative of the critic's output for the actor's actions)
-                            actor_loss = -self.critic1(states, self.actor(states)).mean()
+                            actor_loss = -self.critic.Q1(states, self.actor(states)).mean()
 
                             # Optimize the actor
                             self.actor_optimizer.zero_grad()
@@ -286,10 +329,7 @@ class TD3Agent(torch_nn.Module):
 
                             # ------------------- Soft Updates ------------------- #
                             # Update target networks
-                            for param, target_param in zip(self.critic1.parameters(), self.critic1_target.parameters()):
-                                target_param.data.copy_(self.TAU * param.data + (1 - self.TAU) * target_param.data)
-
-                            for param, target_param in zip(self.critic2.parameters(), self.critic2_target.parameters()):
+                            for param, target_param in zip(self.critic.parameters(), self.critic_target.parameters()):
                                 target_param.data.copy_(self.TAU * param.data + (1 - self.TAU) * target_param.data)
 
                             for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
@@ -312,13 +352,13 @@ class TD3Agent(torch_nn.Module):
                         "episode_length": episode_length
                     })
 
-                if store_episode_stats:
+                if store_episode_rewards:
                     episode_returns.append(episode_reward)
                     episode_lengths.append(episode_length)
                     if len(episode_returns) > 10 and self.wandb_upload:
                         wandb.log(
                             {
-                                "mean_episode_return_10": np.mean(episode_returns[-10:])
+                                "mean_episode_return": np.mean(episode_returns[-10:])
                             }
                         )
 
@@ -415,43 +455,3 @@ class TD3Agent(torch_nn.Module):
         if record_stats:
             return episode_rewards, episode_lengths
 
-
- 
-def hyperparameter_tuning(env, state_dim, action_dim, percept=False, device="cpu"):
-    # Define a grid of hyperparameters to sweep over
-    sweep_config = {
-        'method': 'bayes',
-        'metric': {'name': 'mean_episode_return', 'goal': 'maximize'},
-        'parameters': {
-            'UPDATE_DELAY': {'values': [2, 10]},
-            'TAU': {'values': [0.005, 0.01]},
-            'LR_ACTOR': {'values': [5e-5, 1e-4]},
-            'LR_CRITIC': {'values': [1e-4, 3e-4, 1e-3]},
-            'EXPLORATION_NOISE': {'values': [0.1, 0.2, 0.5]},
-        },
-        # 'early_terminate': {'type': 'hyperband', 'min_iter': 3}
-    }
-
-    # Initialize a W&B sweep
-    sweep_id = wandb.sweep(sweep_config, project="TD3-Hyperparameter-Tuning", entity="arkapatra31-ust")
-
-    # Define the training function for the sweep
-    def train_sweep():
-        with wandb.init() as run:
-            config = wandb.config
-            hyperparams = {
-                "LR_ACTOR": config.LR_ACTOR,
-                "LR_CRITIC": config.LR_CRITIC,
-                "EXPLORATION_NOISE": config.EXPLORATION_NOISE,
-                "TAU": config.TAU,
-                "UPDATE_DELAY": config.UPDATE_DELAY,
-                "wandb_upload": True,
-            }
-            wandb.run.name = f"{env.spec.id}_{config.LR_ACTOR:.4f}_{config.LR_CRITIC:.4f}_{config.EXPLORATION_NOISE:.2f}_{config.TAU:.3f}_{config.UPDATE_DELAY}"
-            print(f"Starting a new sweep run with hyperparameters:\n {hyperparams}")
-            td3_agent = TD3Agent(state_dim, action_dim, hyperparams=hyperparams, device=device)
-            td3_agent.train_agent(env=env, store_episode_stats=True)
-            # td3_agent.test_agent(env=env, n_episodes=3)
-
-    # Start the sweep agent to run the training function for each configuration
-    wandb.agent(sweep_id, function=train_sweep, count=50)  # Adjust count as needed for the number of runs

@@ -11,17 +11,6 @@ import cv2
 
 import gymnasium as gym
 
-SEED = 31
-np.random.seed(SEED)
-# 1. Set seeds for PyTorch (CPU and GPU)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
-
-# 2. Ensure deterministic behavior for CuDNN
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-
 class A2CAgent(nn.Module):
 
     def __init__(self, n_features, n_actions, percept=False, device="cpu", hyperparams={}):
@@ -39,6 +28,7 @@ class A2CAgent(nn.Module):
         self.ent_coef = hyperparams.get("ENT_COEF", 0.01)  # coefficient for the entropy bonus (to encourage exploration)
         self.actor_lr = hyperparams.get("LR_ACTOR", 0.001)
         self.critic_lr = hyperparams.get("LR_CRITIC", 0.005)
+        self.seed = hyperparams.get("SEED", 31)
 
         self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
         self.save_model = hyperparams.get("SAVE_MODEL", False)
@@ -46,6 +36,8 @@ class A2CAgent(nn.Module):
         # Note: the actor has a slower learning rate so that the value targets become
         # more stationary and are theirfore easier to estimate for the critic
         self.device = device
+        self.state_dim = n_features
+        self.action_dim = n_actions
 
         critic_layers = [
             nn.Linear(n_features, 32),
@@ -158,21 +150,23 @@ class A2CAgent(nn.Module):
         actor_loss.backward()
         self.actor_optim.step()
 
-    def train_agent(self, env, store_episode_stats=False):
+    def train_agent(self, env, store_episode_rewards=False):
         """Sets the actor and critic networks to training mode."""
         self.actor.train()
         self.critic.train()
 
 
         env_name = env.spec.id
+        model_path = None
 
         if env.action_space.__class__.__name__ == "Box":
             print("Continuous action space detected. A2C is not suitable for continuous action spaces.")
             # return
 
-        model_path = f"Weights/{env_name}_A2C_weights/{self.n_updates}_alr{self.actor_lr}_ent{self.ent_coef}"
 
-        os.makedirs(model_path, exist_ok=True)
+        if self.save_model:
+            model_path = f"Weights/{env_name}_A2C_weights/{self.n_updates}_alr{self.actor_lr}_clr_{self.critic_lr}_ent{self.ent_coef}-a"
+            os.makedirs(model_path, exist_ok=True)
 
         if self.wandb_upload:
             # Start a new wandb run to track this script.
@@ -185,6 +179,9 @@ class A2CAgent(nn.Module):
                 config={
                     "env": env_name,
                     "architecture": "A2C",
+                    "seed": self.seed,
+                    "state_dim": self.state_dim,
+                    "action_dim": self.action_dim,
                     "n_updates": self.n_updates,
                     "n_steps_per_update": self.n_steps_per_update,
                     "gamma": self.gamma,
@@ -223,7 +220,7 @@ class A2CAgent(nn.Module):
 
             # at the start of training reset all envs to get an initial state
             if sample_phase == 0:
-                states, info = env.reset(seed=SEED)
+                states, info = env.reset(seed=self.seed)
 
             # play n steps in our parallel environments to collect data
             for step in range(self.n_steps_per_update):
@@ -264,7 +261,7 @@ class A2CAgent(nn.Module):
                                 "episode_length": episode_length,
                             }
                         )
-                    if store_episode_stats:
+                    if store_episode_rewards:
                         episode_returns.append(episode_return)
                         episode_lengths.append(episode_length)
                         if len(episode_returns) > 10 and self.wandb_upload:
@@ -273,7 +270,7 @@ class A2CAgent(nn.Module):
                                     "mean_episode_return": np.mean(episode_returns[-10:])
                                 }
                             )
-                    states, info = env.reset(seed=SEED+sample_phase)
+                    states, info = env.reset(seed=self.seed+sample_phase)
                     episode_return = 0
                     episode_length = 0
 
@@ -322,7 +319,7 @@ class A2CAgent(nn.Module):
         env_name = env.spec.id
 
         if model_path is None:
-            model_path = f"Weights/{env_name}_A2C_weights/{self.n_updates}_alr{self.actor_lr}_ent{self.ent_coef}"
+            model_path = f"Weights/{env_name}_A2C_weights/{self.n_updates}_alr{self.actor_lr}_clr_{self.critic_lr}_ent{self.ent_coef}-a"
 
         """ load network weights """
 
@@ -349,18 +346,15 @@ class A2CAgent(nn.Module):
                     config={
                         "env": env_name,
                         "algo": "A2C",
-                        "actor_lr": self.actor_lr,
-                        "critic_lr": self.critic_lr,
-                        "n_updates": self.n_updates,
-                        "n_steps_per_update": self.n_steps_per_update,
-                        "gamma": self.gamma,
-                        "lam": self.lam,
-                        "ent_coef": self.ent_coef,
+                        "seed": self.seed,
+                        "state_dim": self.state_dim,
+                        "action_dim": self.action_dim,
+                        "model_path": model_path,
                     },
                 )
 
             # get an initial state
-            state, info = env.reset(seed=SEED + episode)
+            state, info = env.reset(seed=self.seed + episode)
             ep_reward = 0
             ep_length = 0
 
@@ -414,4 +408,5 @@ class A2CAgent(nn.Module):
 
         env.close()
 
-        return episode_rewards, episode_lengths
+        if record_stats:
+            return episode_rewards, episode_lengths

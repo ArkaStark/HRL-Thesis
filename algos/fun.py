@@ -8,17 +8,6 @@ from tqdm import tqdm
 import wandb
 import cv2
 
-SEED = 31
-np.random.seed(SEED)
-# 1. Set seeds for PyTorch (CPU and GPU)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
-
-# 2. Ensure deterministic behavior for CuDNN
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-
 
 def reset_grad2(t, requires_grad=None):
     tr = t.detach()
@@ -177,7 +166,7 @@ class Worker(nn.Module):
         h, c = states
         return reset_grad2(h), reset_grad2(c)
     
-class FuNAgent(nn.Module):
+class FUNAgent(nn.Module):
     """Feudal Networks for Hierarchical Reinforcement Learning."""
 
     def __init__(
@@ -189,7 +178,7 @@ class FuNAgent(nn.Module):
             device = "cpu"
     ) -> None:
         """Initialize the Feudal Networks."""
-        super(FuNAgent, self).__init__()
+        super(FUNAgent, self).__init__()
 
         #Hyperparameters
         self.d = hyperparams.get("GOAL_DIM", 256) # Dimension of the latent state representation for goals
@@ -197,7 +186,7 @@ class FuNAgent(nn.Module):
         self.c = hyperparams.get("SUBGOAL_HORIZON", 10) # Prediction horizon for the manager
         self.gamma_M = hyperparams.get("GAMMA_M", 0.99)
         self.gamma_W = hyperparams.get("GAMMA_W", 0.95)
-        self.alpha = hyperparams.get("ALPHA", 0.01)
+        self.alpha = hyperparams.get("ALPHA", 0.005)
         self.ent_coef = hyperparams.get("ENT_COEF", 0.001) # Entropy regularization coefficient
         self.lr = hyperparams.get("LR", 3e-4)
         self.b = hyperparams.get("BATCH_SIZE", 1) # Batch size for training
@@ -209,6 +198,7 @@ class FuNAgent(nn.Module):
 
         self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
         self.save_model = hyperparams.get("SAVE_MODEL", False)
+        self.seed = hyperparams.get("SEED", 31)
 
         self.device = device
         self.state_dim = state_dim
@@ -250,7 +240,7 @@ class FuNAgent(nn.Module):
     #     return value_M, goals, s, states
     
     def init_state(self):
-        self.goals = [0 for _ in range(self.c)]  # To store the current goals for the worker
+        self.goals = [torch.zeros(self.d, device=self.device) for _ in range(self.c)]  # To store the current goals for the worker
         return self.worker.init_state(self.b), self.manager.init_state(self.b)
     
     def reset_states_grad(self, states):
@@ -314,8 +304,7 @@ class FuNAgent(nn.Module):
             entropies, 
             ent_coef=0.01, 
             gamma_M=0.99, 
-            gamma_W=0.95, 
-            alpha=0.8
+            gamma_W=0.95
         ):
         """Compute the loss for training the Feudal Networks."""
         lam = 0.95
@@ -367,7 +356,7 @@ class FuNAgent(nn.Module):
             # adv_M = ret_M - value_M[t]
 
             # Generalized Advantage Estimation?
-            del_W = alpha * rewards[t] + rI[t] + gamma_W * (1 - dones[t]) * value_W[t + 1] - value_W[t]
+            del_W = rewards[t] + rI[t] + gamma_W * (1 - dones[t]) * value_W[t + 1] - value_W[t]
             adv_W = adv_W * gamma_W * lam * (1 - dones[t]) + del_W
             del_M = rewards[t] + gamma_M * (1 - dones[t]) * value_M[t + 1] - value_M[t]
             adv_M = adv_M * gamma_M * lam * (1 - dones[t]) + del_M
@@ -392,10 +381,12 @@ class FuNAgent(nn.Module):
     def train_agent(self, env, store_episode_rewards=False):
 
         env_name = env.spec.id
+        model_path = None
 
-        model_path = f"Weights/{env_name}_fun/4kupdates_d{self.d}_k{self.k}_c{self.c}_lr_{self.lr:.4f}_ent_{self.ent_coef:.4f}"
-        # model_path = "Weights/Pong-v5/fun_3k_updates_d256_k16_c10_lr_3e-4_ent_1e-3"
-        os.makedirs(model_path, exist_ok=True)
+        if self.save_model:
+            model_path = f"Weights/{env_name}_fun/{self.n_updates}_d{self.d}_k{self.k}_c{self.c}_lr_{self.lr:.4f}_ent_{self.ent_coef:.4f}"
+            # model_path = "Weights/Pong-v5/fun_3k_updates_d256_k16_c10_lr_3e-4_ent_1e-3"
+            os.makedirs(model_path, exist_ok=True)
 
         torch.autograd.set_detect_anomaly(True, check_nan=False)
 
@@ -408,8 +399,11 @@ class FuNAgent(nn.Module):
                 project="FuN-Train",
                 # Track hyperparameters and run metadata.
                 config={
-                    "architecture": "FuN",
+                    "architecture": "FUN",
                     "env": env_name,
+                    "seed": self.seed,
+                    "state_dim": self.state_dim,
+                    "action_dim": self.action_dim,
                     "epochs": self.n_updates,
                     "steps_per_update": self.steps_per_update,
                     "learning_rate": self.lr,
@@ -430,7 +424,7 @@ class FuNAgent(nn.Module):
     
         self.load_model = False
         if self.load_model:
-            self.load_state_dict(torch.load("Weights/LunarLander-v3_fun/2kupdates_d256_k16_c10_lr_0.0003_ent_0.0010/model.pt", map_location=self.device))
+            self.load_state_dict(torch.load("Weights/LunarLander-v3_fun/2500updates_d256_k16_c10_lr_0.0003_ent_0.0010/model.pt", map_location=self.device))
 
         # total_loss_history = []
         # critic_loss_history = []
@@ -441,7 +435,7 @@ class FuNAgent(nn.Module):
         ep_reward = 0
 
         self.train()
-        obs, _ = env.reset(seed = SEED)
+        obs, _ = env.reset(seed = self.seed)
         states = self.init_state()
         env_steps = 0
 
@@ -503,7 +497,7 @@ class FuNAgent(nn.Module):
                 log_probs[t] = log_prob.squeeze(0)
                 entropies[t] = entropy.squeeze(0)
 
-                rewards[t] = reward #scale reward?
+                rewards[t] = reward * self.alpha #scale reward?
                 # print(f"Reward received: {reward}, Normalized reward: {rewards[t].item()}")#, reward_threshold=env.spec.reward_threshold)
                 values_M[t] = value_M.squeeze(0)
                 values_W[t] = value_W.squeeze(0)
@@ -516,7 +510,7 @@ class FuNAgent(nn.Module):
                 if done:
                     episodes_rewards.append(ep_reward)
                     ep_reward = 0
-                    obs, _ = env.reset(seed = SEED+epoch)
+                    obs, _ = env.reset(seed = self.seed+epoch)
                     states = self.init_state()
 
             with torch.no_grad():
@@ -534,8 +528,7 @@ class FuNAgent(nn.Module):
                 entropies, 
                 self.ent_coef, 
                 self.gamma_M, 
-                self.gamma_W, 
-                self.alpha
+                self.gamma_W
             )
             self.update((critic_loss_M + critic_loss_W + loss_M + loss_W))
 
@@ -553,13 +546,13 @@ class FuNAgent(nn.Module):
                     "dir_cos": dcoss.mean().item(), # closer to 0 means better cosine embedding loss [-1, 1]
                 })
 
-            if self.save_model and (epoch + 1) % 100 == 0:
+            if self.save_model and (epoch + 1) % 25 == 0:
                 torch.save(self.state_dict(), f"{model_path}/model.pt")
 
             if len(episodes_rewards)>10:
                 mean_reward = np.mean(episodes_rewards[-10:])
                 if self.wandb_upload:
-                    run.log({"avg_reward_last_10": mean_reward})
+                    run.log({"mean_episode_return": mean_reward})
 
             # Append losses to history
             # total_loss_history.append((critic_loss_M + critic_loss_W + loss_M + loss_W).item())
@@ -593,18 +586,12 @@ class FuNAgent(nn.Module):
                     project="FuN-Test",
                     # Track hyperparameters and run metadata.
                     config={
-                        "algo": "FuN",
+                        "algo": "FUN",
                         "env": env_name,
-                        "epochs": self.n_updates,
-                        "steps_per_update": self.steps_per_update,
-                        "learning_rate": self.lr,
-                        "d": self.d,
-                        "k": self.k,
-                        "c": self.c,
-                        "gamma_M": self.gamma_M,
-                        "gamma_W": self.gamma_W,
-                        "alpha": self.alpha,
-                        "ent_coef": self.ent_coef,
+                        "seed": self.seed,
+                        "state_dim": self.state_dim,
+                        "action_dim": self.action_dim,
+                        "model_path": model_path,
                     },
                 )
                 run.name = f"{env_name}_{episode + 1}"
@@ -612,7 +599,7 @@ class FuNAgent(nn.Module):
             
             self.eval()
 
-            obs, _ = env.reset(seed=SEED + episode)
+            obs, _ = env.reset(seed=self.seed + episode)
             states = self.init_state()
             done = False
             t = 0
@@ -657,12 +644,38 @@ class FuNAgent(nn.Module):
             if record_stats:
                 episode_rewards.append(float(episode_reward))
                 episode_lengths.append(t)
-                print(f"Episode {episode + 1}: Reward = {episode_reward}, Length = {t}")
+
+            print(f"Episode {episode + 1}: Reward = {episode_reward}, Length = {t}")
 
         env.close()
 
         if record_stats:
             return episode_rewards, episode_lengths
 
+    def get_goals(self):
+        """Return the current goals for the worker."""
+        return self.goals[-self.c:]  # Return the last c goals
 
+    def get_states(self):
+        """Return the current latent states for the manager."""
+        return self.goals[-self.c:]  # Return the last c latent states
+
+    def get_values(self, obs):
+        """Return the Q-values for the manager and worker given the current observation and states."""
+        obs = torch.as_tensor(obs, dtype=torch.float32).to(self.device)
+        states = self.init_state()
+        t = 0
+        hidden_M = states[1]
+        z = self.perception(obs)  # Latent state representation [batch x d]
+        value_M, g, s, hidden_M = self.manager(z, hidden_M, t, reset_value_grad=False)
+        
+        states = (states[0], hidden_M)
+
+        hidden_W = states[0]
+        value_W, action_probs, hidden_W = self.worker(z, self.goals[-self.c:], hidden_W, reset_value_grad=False)
+        states = (hidden_W, states[1])
+
+        return value_M.item(), value_W.item()
+
+    
 

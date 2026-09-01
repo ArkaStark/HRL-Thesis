@@ -1,0 +1,133 @@
+{
+    "method": "bayes",
+    "metric": {
+        "name": "mean_episode_return",
+        "goal": "maximize"
+    },
+    "parameters": {
+        "LR": {
+            "distribution": "uniform",
+            "min": 0.001,
+            "max": 0.004
+        },
+        "NUM_OPTIONS": {
+            "values": [
+                2,
+                3,
+                4
+            ]
+        },
+        "TERM_REG": {
+            "distribution": "log_uniform_values",
+            "min": 0.0001,
+            "max": 0.0002
+        },
+        "ENT_COEF": {
+            "distribution": "log_uniform_values",
+            "min": 0.0003,
+            "max": 0.006
+        },
+        "EPSILON_DECAY": {
+            "distribution": "uniform",
+            "min": 0.99,
+            "max": 0.999
+        },
+        "GOAL_DIM": {
+            "values": [
+                2,
+                4
+            ]
+        },
+        "N_GOALS": {
+            "values": [
+                1,
+                2,
+                4
+            ]
+        },
+        "LR_ACTOR": {
+            "distribution": "log_uniform_values",
+            "min": 1e-05,
+            "max": 0.0003
+        },
+        "LR_CRITIC": {
+            "distribution": "log_uniform_values",
+            "min": 0.0001,
+            "max": 0.001
+        },
+        "EXPL_NOISE_MANAGER": {
+            "distribution": "uniform",
+            "min": 0.3,
+            "max": 0.6
+        },
+        "EXPL_NOISE_WORKER": {
+            "distribution": "uniform",
+            "min": 0.05,
+            "max": 0.25
+        },
+        "SUBGOAL_HORIZON": {
+            "values": [
+                2,
+                5,
+                10
+            ]
+        },
+        "GOAL_BOUND": {
+            "distribution": "uniform",
+            "min": 1.5,
+            "max": 1.8
+        },
+        "GOAL_THRESHOLD": {
+            "distribution": "uniform",
+            "min": 0.1,
+            "max": 2.0
+        },
+        "N_LEVELS": {
+            "values": [
+                2,
+                3
+            ]
+        },
+        "SUBGOAL_TEST_FREQ": {
+            "distribution": "uniform",
+            "min": 0.1,
+            "max": 0.9
+        },
+        "ALPHA": {
+            "distribution": "uniform",
+            "min": 0.1,
+            "max": 0.4
+        },
+        "LAM": {
+            "distribution": "uniform",
+            "min": 0.95,
+            "max": 0.99
+        },
+        "BATCH_SIZE": {
+            "values": [
+                64,
+                128,
+                256
+            ]
+        },
+        "UPDATE_DELAY": {
+            "values": [
+                1,
+                2,
+                4
+            ]
+        },
+        "TAU": {
+            "distribution": "uniform",
+            "min": 0.001,
+            "max": 0.01
+        },
+        "PPO_EPOCHS": {
+            "values": [
+                2,
+                4,
+                8
+            ]
+        }
+    }
+}

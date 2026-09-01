@@ -1,5 +1,3 @@
-from turtle import done
-
 import gymnasium as gym
 import numpy as np
 import torch
@@ -138,7 +136,14 @@ class TD3(nn.Module):
         self.critic = Critic(state_dim, action_dim).to(device)
         self.critic_target = Critic(state_dim, action_dim).to(device)
         self.critic_target.load_state_dict(self.critic.state_dict())
-        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=self.LR_CRITIC, weight_decay=1e-2)
+        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=self.LR_CRITIC)#, weight_decay=1e-2)
+
+        self.critic_target.eval()  # Set target critic to evaluation mode
+        self.actor_target.eval()   # Set target actor to evaluation mode
+        for param in self.critic_target.parameters():
+            param.requires_grad = False  # Freeze target critic parameters
+        for param in self.actor_target.parameters():
+            param.requires_grad = False  # Freeze target actor parameters
 
         self.max_action = max_action
         self.total_it = 0
@@ -343,6 +348,8 @@ class HACAgent(nn.Module):
             lvl_input = np.concatenate([state, goal])
             nxt_lvl_input = np.concatenate([next_state, new_goal])
 
+
+
             if level>0 and self.compute_her_reward(self.previous_gstate, goal, self.achieved_gstate)==-1:  # Check if goal was missed
                 if subgoal_test:
                     penalty = -self.SUBGOAL_HORIZON  # HAC sec 4.5 penalty is -H
@@ -370,7 +377,7 @@ class HACAgent(nn.Module):
         # Push hindsight goal transitions to the replay buffer (fill up TBD HAC sec 4.4)
         achieved_gstates = [transition[7] for transition in hindsight_goal_transitions]  # Extract achieved states from the transitions
         for t in range(len(hindsight_goal_transitions)):
-            gstates = self.sample_goal_states(achieved_gstates, t, type="future", k=4)  # Sample future goals for HER
+            gstates = self.sample_goal_states(achieved_gstates, t, type="future", k=2)  # Sample future goals for HER
             for gstate in gstates:
                 state, action, _, next_state, done, _, previous_gstate, achieved_gstate = hindsight_goal_transitions[t]
                 goal = gstate - previous_gstate # Compute the new goal based on the achieved state and the sampled future goal

@@ -193,7 +193,7 @@ class NStepBuffer:
 		return items
 
 
-class RainbowAgent(nn.Module):
+class RAINBOWAgent(nn.Module):
 	def __init__(
 		self,
 		state_dim,
@@ -202,7 +202,7 @@ class RainbowAgent(nn.Module):
 		hyperparams = {},
 		device = "cpu",
 	):
-		super(RainbowAgent, self).__init__()
+		super(RAINBOWAgent, self).__init__()
 
 		self.gamma = hyperparams.get("GAMMA", 0.99) # Default discount factor
 		self.lr = hyperparams.get("LR", 1e-4) # Default learning rate

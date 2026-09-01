@@ -1,4 +1,5 @@
 import cv2
+import copy
 import gymnasium as gym
 import numpy as np
 import torch
@@ -68,7 +69,7 @@ class OCAgent(nn.Module):
         self.action_dim = action_dim
         self.device = device
 
-        self.LR = hyperparams.get("LR", 1e-3)
+        self.LR = hyperparams.get("LR", 3e-4)
         self.GAMMA = hyperparams.get("GAMMA", 0.99)
         self.NUM_OPTIONS = hyperparams.get("NUM_OPTIONS", 4)
         self.ENTROPY_WEIGHT = hyperparams.get("ENT_COEF", 0.01)
@@ -76,7 +77,8 @@ class OCAgent(nn.Module):
         self.EPSILON_MIN = hyperparams.get("EPSILON_MIN", 0.1)
         self.EPSILON_DECAY = hyperparams.get("EPSILON_DECAY", 0.995)
         self.MAX_ENV_STEPS = hyperparams.get("MAX_ENV_STEPS", 1e6)
-        self.TERM_REG = hyperparams.get("TERM_REG", 0.001)
+        self.TERM_REG = hyperparams.get("TERM_REG", 1e-3)
+        self.TARGET_UPDATE_FREQ = hyperparams.get("TARGET_UPDATE_FREQ", 200)
         
         self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
         self.save_model = hyperparams.get("SAVE_MODEL", False)
@@ -112,7 +114,15 @@ class OCAgent(nn.Module):
         # Termination function: beta(s, omega)
         self.terminations = nn.Linear(128, self.NUM_OPTIONS)
 
-        self.optimizer = optim.Adam(self.parameters(), lr=self.LR)
+        # Frozen target network used only for critic bootstrap targets.
+        self.target_features = copy.deepcopy(self.features)
+        self.target_Q_options = copy.deepcopy(self.Q_options)
+        self._freeze_target_network()
+
+        self.optimizer = optim.Adam(
+            (param for name, param in self.named_parameters() if not name.startswith("target_") and param.requires_grad),
+            lr=self.LR,
+        )
 
         self.to(self.device)
 
@@ -123,6 +133,24 @@ class OCAgent(nn.Module):
         self.total_unique_params = sum(p.numel() for p in unique_params)   
 
         print(f"Trainable parameters: {self.trainable_params}, Total parameters: {self.total_params}, Total unique parameters: {self.total_unique_params}")
+
+    def _freeze_target_network(self):
+        self.target_features.eval()
+        self.target_Q_options.eval()
+        for param in self.target_features.parameters():
+            param.requires_grad_(False)
+        for param in self.target_Q_options.parameters():
+            param.requires_grad_(False)
+
+    def sync_target_network(self):
+        self.target_features.load_state_dict(self.features.state_dict())
+        self.target_Q_options.load_state_dict(self.Q_options.state_dict())
+        self._freeze_target_network()
+
+    def target_q_values(self, state):
+        with torch.no_grad():
+            phi = self.target_features(state)
+            return self.target_Q_options(phi)
 
     def forward(self, state):
         phi = self.features(state)
@@ -154,7 +182,7 @@ class OCAgent(nn.Module):
 
         env_name = env.spec.id
 
-        model_path = f"Weights/{env_name}_OC/model_{self.MAX_ENV_STEPS}steps__nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}_xx.pt"
+        model_path = f"Weights/{env_name}_OC/model_{self.MAX_ENV_STEPS}steps__nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}_xxx.pt"
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
         if self.wandb_upload:
@@ -177,6 +205,7 @@ class OCAgent(nn.Module):
                     "epsilon_decay": self.EPSILON_DECAY,
                     "max_env_steps": self.MAX_ENV_STEPS,
                     "termination_regularization": self.TERM_REG,
+                    "target_update_freq": self.TARGET_UPDATE_FREQ,
                     "model_path": model_path,
                     "trainable_params": self.trainable_params,
                     "total_params": self.total_params,
@@ -225,14 +254,15 @@ class OCAgent(nn.Module):
                     
                     # 3. Calculate Option-Critic Targets and Losses
                     next_q_vals, _, next_term_probs = self.forward(next_state)
+                    target_next_q_vals = self.target_q_values(next_state)
                     
                     # Did the current option terminate in the next state?
                     term_prob_next = next_term_probs[0, current_option]
                     
                     # Value of the next state: U(s', omega)
                     # If it terminates, we can pick the best next option. If not, we stick with the current.
-                    best_next_q = next_q_vals.max(dim=1)[0]
-                    current_next_q = next_q_vals[0, current_option]
+                    best_next_q = target_next_q_vals.max(dim=1)[0]
+                    current_next_q = target_next_q_vals[0, current_option]
                     
                     # Target for Q-value (TD Target)
                     if done:
@@ -253,7 +283,9 @@ class OCAgent(nn.Module):
                     # Termination Loss
                     # We want to increase termination probability if the current option's Q-value 
                     # is worse than the best available option's Q-value.
-                    termination_loss = term_probs[0, current_option] * (q_val.detach() - next_q_vals.max(dim=1)[0].detach() + self.TERM_REG)
+                    termination_loss = next_term_probs[0, current_option] * (1 - done) * (
+                        current_next_q.detach() - best_next_q.detach() + self.TERM_REG
+                    )
 
                     # 4. Backpropagation
                     total_loss = critic_loss + actor_loss + termination_loss
@@ -262,6 +294,8 @@ class OCAgent(nn.Module):
                     total_loss.backward()
                     torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=0.5)
                     self.optimizer.step()
+                    if self.TARGET_UPDATE_FREQ > 0 and env_steps % self.TARGET_UPDATE_FREQ == 0:
+                        self.sync_target_network()
                     
                     # 5. Roll over state and check for option termination
                     state = next_state
@@ -305,7 +339,7 @@ class OCAgent(nn.Module):
                 if store_episode_rewards:
                     reward_history.append(episode_reward)
                     if self.wandb_upload and len(reward_history) > 10:
-                        wandb.log({"average_reward_last_10": np.mean(reward_history[-10:])})
+                        wandb.log({"mean_episode_return": np.mean(reward_history[-10:])})
 
                 pbar.update(episode_len)
 
@@ -340,7 +374,7 @@ class OCAgent(nn.Module):
                     entity="arkapatra31-ust",
                     # Set the wandb project where this run will be logged.
                     project="OC-Test",
-                    group=f"{env_name}-{n_episodes}-Obs-Noise-0.1",
+                    # group=f"{env_name}-{n_episodes}-Obs-Noise-0.1",
                     # Track hyperparameters and run metadata.
                     config={
                         "env": env_name,
@@ -400,6 +434,8 @@ class OCAgent(nn.Module):
                         "term_prob_next": term_prob_next.item(),
                         "episode_reward": episode_reward,
                         "action": action,
+                        "x_position": state[0][0],
+                        "y_position": state[0][1]
                     })
 
             if self.wandb_upload:
@@ -464,3 +500,8 @@ class OCAgent(nn.Module):
 #     # Start the sweep agent to run the training function for each configuration
 #     wandb.agent(sweep_id, function=train_sweep, count=20)  # Adjust count as needed for the number of runs
 
+    def get_values(self, state):
+        """Get the value function for all options given a state."""
+        state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
+        q_vals, _, _ = self.forward(state)
+        return q_vals.detach().cpu().numpy()[0]  # Return as a 1D numpy array

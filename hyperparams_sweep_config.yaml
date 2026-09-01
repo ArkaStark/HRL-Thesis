@@ -1,0 +1,99 @@
+method: bayes
+metric:
+  goal: maximize
+  name: mean_episode_return
+parameters:
+  ALPHA:
+    distribution: uniform
+    max: 0.4
+    min: 0.1
+  BATCH_SIZE:
+    values:
+    - 64
+    - 128
+    - 256
+  ENT_COEF:
+    distribution: log_uniform_values
+    max: 0.006
+    min: 0.0003
+  EPSILON_DECAY:
+    distribution: uniform
+    max: 0.999
+    min: 0.99
+  EXPL_NOISE_MANAGER:
+    distribution: uniform
+    max: 0.6
+    min: 0.3
+  EXPL_NOISE_WORKER:
+    distribution: uniform
+    max: 0.25
+    min: 0.05
+  GOAL_BOUND:
+    distribution: uniform
+    max: 1.8
+    min: 1.5
+  GOAL_DIM:
+    values:
+    - 2
+    - 4
+  GOAL_THRESHOLD:
+    distribution: uniform
+    max: 2.0
+    min: 0.1
+  LAM:
+    distribution: uniform
+    max: 0.99
+    min: 0.95
+  LR:
+    distribution: uniform
+    max: 0.004
+    min: 0.001
+  LR_ACTOR:
+    distribution: log_uniform_values
+    max: 0.0003
+    min: 1.0e-05
+  LR_CRITIC:
+    distribution: log_uniform_values
+    max: 0.001
+    min: 0.0001
+  NUM_OPTIONS:
+    values:
+    - 2
+    - 3
+    - 4
+  N_GOALS:
+    values:
+    - 1
+    - 2
+    - 4
+  N_LEVELS:
+    values:
+    - 2
+    - 3
+  PPO_EPOCHS:
+    values:
+    - 2
+    - 4
+    - 8
+  SUBGOAL_HORIZON:
+    values:
+    - 2
+    - 5
+    - 10
+  SUBGOAL_TEST_FREQ:
+    distribution: uniform
+    max: 0.9
+    min: 0.1
+  TAU:
+    distribution: uniform
+    max: 0.01
+    min: 0.001
+  TERM_REG:
+    distribution: log_uniform_values
+    max: 0.0002
+    min: 0.0001
+  UPDATE_DELAY:
+    values:
+    - 1
+    - 2
+    - 4

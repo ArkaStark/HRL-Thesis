@@ -350,7 +350,7 @@ class PPOAgent(nn.Module):
                                    "episode_length": ep_length
                         })
                     if store_episode_rewards:
-                        ep_rewards.append(ep_reward.mean().item())
+                        ep_rewards.append(ep_reward)
                         ep_lengths.append(ep_length)
                     ep_reward = 0
                     ep_length = 0
@@ -403,7 +403,7 @@ class PPOAgent(nn.Module):
             if len(ep_rewards)>10:
                 mean_reward = np.mean(ep_rewards[-10:])
                 if self.wandb_upload:
-                    run.log({"avg_reward_last_10": mean_reward})
+                    run.log({"mean_episode_return": mean_reward})
 
         if self.wandb_upload:
             run.finish()

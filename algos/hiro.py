@@ -156,6 +156,13 @@ class TD3(nn.Module):
         self.critic_target.load_state_dict(self.critic.state_dict())
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=self.LR_CRITIC)
 
+        self.critic_target.eval()  # Set target critic to evaluation mode
+        self.actor_target.eval()   # Set target actor to evaluation mode
+        for param in self.critic_target.parameters():
+            param.requires_grad = False  # Freeze target critic parameters
+        for param in self.actor_target.parameters():
+            param.requires_grad = False  # Freeze target actor parameters
+
         self.total_it = 0
 
     def select_action(self, state):
@@ -445,6 +452,13 @@ class HIROAgent(nn.Module):
             )
             run.name = f"{env_name}_{self.MAX_ENV_STEPS}_{self.LR_ACTOR:.4f}_{self.LR_CRITIC:.4f}"
 
+        load_model = True
+        if load_model:
+            load_model_path = "Weights/Ant-v5-GC_TD3/alr_5.346635183767254e-05_clr_0.0002923700418487162_xxx/model.pt"
+            print(f"Loading model from {load_model_path}")
+            # print(self.worker.state_dict().keys())
+            self.worker.load_state_dict(torch.load(f"{load_model_path}", map_location=self.device))
+
         reward_history = []
         env_steps = 0
 
@@ -461,7 +475,7 @@ class HIROAgent(nn.Module):
                     if episode_length % self.C == 0:
                         goal = self.manager.select_action(state)
                         # Add exploration noise to goal
-                        goal += np.random.normal(0, self.EXPL_NOISE_MANAGER, size=self.state_dim)
+                        goal += np.random.normal(0, self.EXPL_NOISE_MANAGER, size=self.goal_dim)
                         goal = np.clip(goal, -self.GOAL_BOUND, self.GOAL_BOUND)
                         
                         manager_state_start = state.copy()
@@ -487,7 +501,7 @@ class HIROAgent(nn.Module):
                         
                     # Worker Intrinsic Reward & Goal Transition
                     worker_reward = self.intrinsic_reward(state, goal, next_state)
-                    next_goal = state + goal - next_state
+                    next_goal = state + goal- next_state
 
                     if self.wandb_upload:
                         wandb.log({
@@ -556,23 +570,23 @@ class HIROAgent(nn.Module):
             print("Weights not found. Please train the agent first.")
             return
 
-        if self.wandb_upload:
-            run = wandb.init(
-                entity="arkapatra31-ust",
-                project="HIRO-Test",
-                config={
-                    "env": env_name,
-                    "architecture": "HIRO",
-                    "model_path": model_path,
-                }
-            )
-            run.name = f"{env_name}_test_{n_episodes}_episodes"
-
         if record_stats:
             episode_rewards = []
             episode_lengths = []
 
         for episode in range(n_episodes):
+
+            if self.wandb_upload:
+                run = wandb.init(
+                    entity="arkapatra31-ust",
+                    project="HIRO-Test",
+                    config={
+                        "env": env_name,
+                        "architecture": "HIRO",
+                        "model_path": model_path,
+                    }
+                )
+                run.name = f"{env_name}_test_{n_episodes}_episodes"
 
             obs, info = env.reset(seed=SEED + episode)  # Seed environment for reproducibility
             done = False
@@ -622,15 +636,15 @@ class HIROAgent(nn.Module):
                     })
 
             if self.wandb_upload:
-                 if renders:
-                     renders = [
-                         cv2.resize(render, (500, 500), interpolation=cv2.INTER_AREA)
-                         for render in renders
-                     ]
-                     video = np.stack(renders, axis=0)
-                     video = np.transpose(video, (0, 3, 1, 2))
-                     wandb.log({"showcase_video": wandb.Video(video, fps=8, format="mp4")})
-                 wandb.finish()
+                if renders:
+                    renders = [
+                        cv2.resize(render, (500, 500), interpolation=cv2.INTER_AREA)
+                        for render in renders
+                    ]
+                    video = np.stack(renders, axis=0)
+                    video = np.transpose(video, (0, 3, 1, 2))
+                    wandb.log({"showcase_video": wandb.Video(video, fps=8, format="mp4")})
+                wandb.finish()
 
             if record_stats:
                 episode_rewards.append(episode_reward)

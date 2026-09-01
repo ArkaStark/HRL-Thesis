@@ -1,0 +1,8 @@
+{
+    "WANDB_UPLOAD": true,
+    "SAVE_MODEL": true,
+    "MAX_ENV_STEPS": 150000.0,
+    "LR": 0.0035,
+    "ENT_COEF": 0.0036,
+    "ALPHA": 0.3
+}
