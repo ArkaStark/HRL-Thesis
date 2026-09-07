@@ -1,0 +1,43 @@
+{
+    "method": "bayes",
+    "metric": {
+        "name": "mean_episode_return",
+        "goal": "maximize"
+    },
+    "parameters": {
+        "LR_ACTOR": {
+            "distribution": "log_uniform_values",
+            "min": 1e-05,
+            "max": 0.0003
+        },
+        "LR_CRITIC": {
+            "distribution": "log_uniform_values",
+            "min": 0.0001,
+            "max": 0.001
+        },
+        "EXPL_NOISE_WORKER": {
+            "distribution": "uniform",
+            "min": 0.05,
+            "max": 0.25
+        },
+        "BATCH_SIZE": {
+            "values": [
+                64,
+                128,
+                256
+            ]
+        },
+        "UPDATE_DELAY": {
+            "values": [
+                1,
+                2,
+                4
+            ]
+        },
+        "TAU": {
+            "distribution": "uniform",
+            "min": 0.001,
+            "max": 0.01
+        }
+    }
+}

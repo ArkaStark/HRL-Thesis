@@ -1,0 +1,31 @@
+{
+    "method": "bayes",
+    "metric": {
+        "name": "mean_episode_return",
+        "goal": "maximize"
+    },
+    "parameters": {
+        "LR": {
+            "distribution": "uniform",
+            "min": 1e-05,
+            "max": 0.01
+        },
+        "ENT_COEF": {
+            "distribution": "log_uniform_values",
+            "min": 0.0001,
+            "max": 0.01
+        },
+        "SUBGOAL_HORIZON": {
+            "values": [
+                2,
+                5,
+                10
+            ]
+        },
+        "ALPHA": {
+            "distribution": "log_uniform_values",
+            "min": 0.001,
+            "max": 1
+        }
+    }
+}

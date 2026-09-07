@@ -1,0 +1,36 @@
+{
+    "method": "bayes",
+    "metric": {
+        "name": "mean_episode_return",
+        "goal": "maximize"
+    },
+    "parameters": {
+        "LR": {
+            "distribution": "uniform",
+            "min": 0.0001,
+            "max": 0.01
+        },
+        "NUM_OPTIONS": {
+            "values": [
+                2,
+                3,
+                4
+            ]
+        },
+        "TERM_REG": {
+            "distribution": "log_uniform_values",
+            "min": 0.0001,
+            "max": 0.3
+        },
+        "ENT_COEF": {
+            "distribution": "log_uniform_values",
+            "min": 0.0001,
+            "max": 0.01
+        },
+        "EPSILON_DECAY": {
+            "distribution": "uniform",
+            "min": 0.99,
+            "max": 0.999
+        }
+    }
+}

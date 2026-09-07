@@ -1,0 +1,29 @@
+{
+    "method": "bayes",
+    "metric": {
+        "name": "mean_episode_return",
+        "goal": "maximize"
+    },
+    "parameters": {
+        "ENT_COEF": {
+            "distribution": "log_uniform_values",
+            "min": 1e-04,
+            "max": 1e-02
+        },
+        "LR_ACTOR": {
+            "distribution": "log_uniform_values",
+            "min": 1e-04,
+            "max": 3e-03
+        },
+        "LR_CRITIC": {
+            "distribution": "log_uniform_values",
+            "min": 1e-03,
+            "max": 1e-02
+        },
+        "LAM": {
+            "distribution": "uniform",
+            "min": 0.95,
+            "max": 0.99
+        }
+    }
+}

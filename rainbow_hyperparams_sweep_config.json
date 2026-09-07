@@ -1,0 +1,39 @@
+{
+    "method": "bayes",
+    "metric": {
+        "name": "mean_episode_return",
+        "goal": "maximize"
+    },
+    "parameters": {
+        "LR": {
+            "distribution": "uniform",
+            "min": 1e-05,
+            "max": 0.01
+        },
+        "N_STEP": {
+            "values": [
+                1,
+                3,
+                5
+            ]
+        },
+        "ATOM_SIZE": {
+            "values": [
+                51,
+                101
+            ]
+        },
+        "V_MAX": {
+            "values": [
+                100.0,
+                200.0,
+                300.0
+            ]
+        },
+        "ALPHA": {
+            "distribution": "uniform",
+            "min": 0.1,
+            "max": 0.9
+        }
+    }
+}

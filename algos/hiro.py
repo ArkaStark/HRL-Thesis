@@ -10,17 +10,6 @@ import cv2
 import os
 import wandb
 
-SEED = 31
-np.random.seed(SEED)
-# 1. Set seeds for PyTorch (CPU and GPU)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
-
-# 2. Ensure deterministic behavior for CuDNN
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-
 # --- Neural Networks (TD3 Base) ---
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim, max_action):
@@ -136,12 +125,12 @@ class TD3(nn.Module):
 
         # General TD3 / RL
         self.LR_ACTOR = hyperparams.get('LR_ACTOR', 1e-4)
-        self.LR_CRITIC = hyperparams.get('LR_CRITIC', 3e-4)
-        self.TAU = hyperparams.get('TAU', 0.005)
+        self.LR_CRITIC = hyperparams.get('LR_CRITIC', 5e-4)
+        self.TAU = hyperparams.get('TAU', 0.0095)
         self.BATCH_SIZE = hyperparams.get('BATCH_SIZE', 64)
         self.POLICY_NOISE = hyperparams.get('POLICY_NOISE', 0.2)
         self.NOISE_CLIP = hyperparams.get('NOISE_CLIP', 0.5)
-        self.POLICY_FREQ = hyperparams.get('POLICY_FREQ', 4)
+        self.POLICY_FREQ = hyperparams.get('UPDATE_DELAY', 2)
 
         self.device = device
         self.MAX_ACTION = max_action
@@ -170,9 +159,12 @@ class TD3(nn.Module):
         with torch.no_grad():
             return self.actor(state).cpu().data.numpy().flatten()
 
-    def train(self, replay_buffer, gamma, is_manager=False):
+    def train(self, replay_buffer, gamma, is_manager=False, max_action=None):
         if len(replay_buffer) < self.BATCH_SIZE:
             return
+
+        if max_action is not None:
+            self.MAX_ACTION = max_action
 
         self.total_it += 1
 
@@ -227,15 +219,17 @@ class HIROAgent(nn.Module):
         # self.MAX_EPISODES = hyperparams.get('MAX_EPISODES', 2000)
         self.MAX_ENV_STEPS = hyperparams.get('MAX_ENV_STEPS', 1e6)
 
-        # General TD3 / RL
+        # TD3 Hyperparameters
         self.LR_ACTOR = hyperparams.get('LR_ACTOR', 1e-4)
-        self.LR_CRITIC = hyperparams.get('LR_CRITIC', 3e-4)
-        self.TAU = hyperparams.get('TAU', 0.005)
+        self.LR_CRITIC = hyperparams.get('LR_CRITIC', 5e-4)
+        self.TAU = hyperparams.get('TAU', 0.0095)
         self.BATCH_SIZE = hyperparams.get('BATCH_SIZE', 64)
         self.POLICY_NOISE = hyperparams.get('POLICY_NOISE', 0.2)
         self.NOISE_CLIP = hyperparams.get('NOISE_CLIP', 0.5)
-        self.POLICY_FREQ = hyperparams.get('POLICY_FREQ', 4)
-        self.MAX_ACTION = hyperparams.get('MAX_ACTION', 1.0)
+        self.POLICY_FREQ = hyperparams.get('UPDATE_DELAY', 2)
+
+        self.MAX_ACTION = hyperparams.get('MAX_ACTION', 3.0)
+        self.SEED = hyperparams.get('SEED', 31)
 
         self.wandb_upload = hyperparams.get('WANDB_UPLOAD', False)
         self.save_model = hyperparams.get('SAVE_MODEL', False)
@@ -342,9 +336,6 @@ class HIROAgent(nn.Module):
             for param, target_param in zip(self.manager.actor.parameters(), self.manager.actor_target.parameters()):
                 target_param.data.copy_(self.TAU * param.data + (1 - self.TAU) * target_param.data)
 
-    def train_worker(self):
-        self.worker.train(self.worker_buffer, self.GAMMA_WORKER, is_manager=False)
-
     def intrinsic_reward(self, state, goal, next_state):
         # Reward worker for getting next_state close to state + goal
         # i.e., minimizing distance between (s_t + g_t) and s_{t+1}
@@ -429,6 +420,9 @@ class HIROAgent(nn.Module):
                 config={
                     "env": env_name,
                     "architecture": "HIRO",
+                    "seed": self.SEED,
+                    "state_dim": self.state_dim,
+                    "action_dim": self.action_dim,
                     "actor_lr": self.LR_ACTOR,
                     "critic_lr": self.LR_CRITIC,
                     "tau": self.TAU,
@@ -452,7 +446,7 @@ class HIROAgent(nn.Module):
             )
             run.name = f"{env_name}_{self.MAX_ENV_STEPS}_{self.LR_ACTOR:.4f}_{self.LR_CRITIC:.4f}"
 
-        load_model = True
+        load_model = False
         if load_model:
             load_model_path = "Weights/Ant-v5-GC_TD3/alr_5.346635183767254e-05_clr_0.0002923700418487162_xxx/model.pt"
             print(f"Loading model from {load_model_path}")
@@ -461,11 +455,13 @@ class HIROAgent(nn.Module):
 
         reward_history = []
         env_steps = 0
+        self.MAX_ACTION = env.action_space.high[0] if isinstance(env.action_space, gym.spaces.Box) else 1.0
+        print(f"Training HIRO on {env_name} with max action {self.MAX_ACTION}")
 
         with tqdm(total=self.MAX_ENV_STEPS, desc="Training Progress") as pbar:
             while env_steps < self.MAX_ENV_STEPS:
 
-                state, _ = env.reset(seed=SEED+env_steps)  # Seed environment for reproducibility
+                state, _ = env.reset(seed=self.SEED+env_steps)  # Seed environment for reproducibility
                 episode_reward = 0
                 done = False
                 episode_length = 0
@@ -477,6 +473,7 @@ class HIROAgent(nn.Module):
                         # Add exploration noise to goal
                         goal += np.random.normal(0, self.EXPL_NOISE_MANAGER, size=self.goal_dim)
                         goal = np.clip(goal, -self.GOAL_BOUND, self.GOAL_BOUND)
+                        original_goal = goal.copy()
                         
                         manager_state_start = state.copy()
                         manager_reward = 0
@@ -496,7 +493,7 @@ class HIROAgent(nn.Module):
                     next_state, reward, terminated, truncated, _ = env.step(action)
                     done = terminated or truncated
                     episode_reward += reward
-                    manager_reward += reward
+                    manager_reward += reward * (self.GAMMA_MANAGER ** (episode_length % self.C))
                     env_steps += 1
                         
                     # Worker Intrinsic Reward & Goal Transition
@@ -519,7 +516,7 @@ class HIROAgent(nn.Module):
                     seq_step += 1
 
                     # Train Worker
-                    self.train_worker()
+                    self.worker.train(self.worker_buffer, self.GAMMA_WORKER, is_manager=False, max_action=self.MAX_ACTION)
 
                     state = next_state
                     goal = next_goal
@@ -528,7 +525,7 @@ class HIROAgent(nn.Module):
                     # Manager Transition Storage and Training (at end of C steps or end of episode)
                     if episode_length % self.C == 0 or done:
                         self.manager_buffer.add(
-                            manager_state_start, goal, manager_reward, state, float(done),
+                            manager_state_start, original_goal, manager_reward, state, float(done),
                             states_seq, actions_seq
                         )
                         self.off_policy_correction()
@@ -545,12 +542,12 @@ class HIROAgent(nn.Module):
 
                 if store_episode_rewards:
                     reward_history.append(episode_reward)
-                    if len(reward_history) > 50:
+                    if len(reward_history) > 10:
                         reward_history.pop(0)
                     avg_reward = np.mean(reward_history)
                     if self.wandb_upload:
                         wandb.log({
-                            "avg_reward_last_50": avg_reward
+                            "mean_episode_return": avg_reward
                         })
 
                 pbar.update(episode_length)
@@ -584,11 +581,14 @@ class HIROAgent(nn.Module):
                         "env": env_name,
                         "architecture": "HIRO",
                         "model_path": model_path,
+                        "seed": self.SEED,
+                        "action_dim": self.action_dim,
+                        "state_dim": self.state_dim
                     }
                 )
                 run.name = f"{env_name}_test_{n_episodes}_episodes"
 
-            obs, info = env.reset(seed=SEED + episode)  # Seed environment for reproducibility
+            obs, info = env.reset(seed=self.SEED + episode)  # Seed environment for reproducibility
             done = False
             episode_reward = 0
             episode_length = 0

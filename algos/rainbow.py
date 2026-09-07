@@ -14,17 +14,6 @@ import os
 import cv2
 from tqdm import tqdm
 
-SEED = 31
-np.random.seed(SEED)
-# 1. Set seeds for PyTorch (CPU and GPU)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
-
-# 2. Ensure deterministic behavior for CuDNN
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-
 Experience = namedtuple("Experience", ["state", "action", "reward", "next_state", "done"])
 
 
@@ -84,15 +73,16 @@ class RainbowNetwork(nn.Module):
 		self.feature = nn.Sequential(
 			nn.Linear(state_dim, 256),
 			nn.ReLU(),
-			nn.Linear(256, 256),
+			nn.Linear(256, 128),
 			nn.ReLU(),
 		)
 
-		self.advantage_hidden = NoisyLinear(256, 256)
-		self.advantage_out = NoisyLinear(256, action_dim * atom_size)
+		self.advantage_hidden = NoisyLinear(128, 128)
+		self.advantage_out = NoisyLinear(128, action_dim * atom_size)
 
-		self.value_hidden = NoisyLinear(256, 256)
-		self.value_out = NoisyLinear(256, atom_size)
+
+		self.value_hidden = NoisyLinear(128, 128)
+		self.value_out = NoisyLinear(128, atom_size)
 
 	def forward(self, x: torch.Tensor):
 		dist = self.dist(x)
@@ -137,7 +127,7 @@ class PrioritizedReplayBuffer:
 		self.priorities[self.pos] = max_prio
 		self.pos = (self.pos + 1) % self.capacity
 
-	def sample(self, batch_size: int, beta: float = 0.4):
+	def sample(self, batch_size: int, alpha: float = 0.4):
 		if len(self.buffer) == self.capacity:
 			prios = self.priorities
 		else:
@@ -149,7 +139,7 @@ class PrioritizedReplayBuffer:
 		indices = np.random.choice(len(self.buffer), batch_size, p=probs)
 		samples = [self.buffer[idx] for idx in indices]
 
-		weights = (len(self.buffer) * probs[indices]) ** (-beta)
+		weights = (len(self.buffer) * probs[indices]) ** (-alpha)
 		weights /= weights.max()
 		weights = np.array(weights, dtype=np.float32)
 		return samples, indices, weights
@@ -210,13 +200,15 @@ class RAINBOWAgent(nn.Module):
 		self.memory_size = hyperparams.get("MEMORY_SIZE", 100_000) # Default size of the replay buffer
 		self.n_step = hyperparams.get("N_STEP", 3) # Default number of steps for multi-step returns
 		self.atom_size = hyperparams.get("ATOM_SIZE", 51) # Default number of atoms for distributional RL
-		self.v_min = hyperparams.get("V_MIN", -200.0) # Default minimum value for distributional RL
+		# self.v_min = hyperparams.get("V_MIN", -200.0) # Default minimum value for distributional RL
 		self.v_max = hyperparams.get("V_MAX", 200.0) # Default maximum value for distributional RL
+		self.v_min = -self.v_max # Default minimum value for distributional RL
 		self.target_update = hyperparams.get("TARGET_UPDATE", 1000) # Default target network update frequency
-		self.beta = hyperparams.get("BETA", 0.4) # Default initial value for importance-sampling weight
-		self.beta_increment = hyperparams.get("BETA_INCREMENT", 1e-6) # Default increment for importance-sampling weight
+		self.alpha = hyperparams.get("ALPHA", 0.4) # Default initial value for importance-sampling weight
+		self.alpha_increment = hyperparams.get("ALPHA_INCREMENT", 1e-6) # Default increment for importance-sampling weight
 		self.prior_eps = hyperparams.get("PRIOR_EPS", 1e-6) # Default small value to avoid zero priority
 		self.max_env_steps = hyperparams.get("MAX_ENV_STEPS", 1e5)
+		self.SEED = hyperparams.get("SEED", 31)
 
 		self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
 		self.save_model = hyperparams.get("SAVE_MODEL", False)
@@ -232,6 +224,8 @@ class RAINBOWAgent(nn.Module):
 		self.target_net = RainbowNetwork(state_dim, action_dim, self.atom_size, self.support).to(self.device)
 		self.target_net.load_state_dict(self.online_net.state_dict())
 		self.target_net.eval()
+		for param in self.target_net.parameters():
+			param.requires_grad = False  # Freeze target critic parameters
 
 		self.optimizer = optim.Adam(self.online_net.parameters(), lr=self.lr)
 		self.memory = PrioritizedReplayBuffer(self.memory_size)
@@ -269,8 +263,8 @@ class RAINBOWAgent(nn.Module):
 		if len(self.memory) < self.batch_size:
 			return None
 
-		self.beta = min(1.0, self.beta + self.beta_increment)
-		samples, indices, weights = self.memory.sample(self.batch_size, self.beta)
+		self.alpha = min(1.0, self.alpha + self.alpha_increment)
+		samples, indices, weights = self.memory.sample(self.batch_size, self.alpha)
 
 		states = torch.FloatTensor(np.array([s.state for s in samples])).to(self.device)
 		actions = torch.LongTensor(np.array([s.action for s in samples])).to(self.device)
@@ -351,6 +345,9 @@ class RAINBOWAgent(nn.Module):
 				config={
 					"env": env_name,
 					"algo": "RAINBOW",
+					"seed": self.SEED,
+					"state_dim": self.state_dim,
+					"action_dim": self.action_dim,
 					"max_steps": self.max_env_steps,
 					"batch_size": self.batch_size,
 					"n_step": self.n_step,
@@ -360,8 +357,8 @@ class RAINBOWAgent(nn.Module):
 					"v_min": self.v_min,
 					"v_max": self.v_max,
 					"target_update": self.target_update,
-					"beta": self.beta,
-					"beta_increment": self.beta_increment,
+					"alpha": self.alpha,
+					"alpha_increment": self.alpha_increment,
 					"prior_eps": self.prior_eps,
 					"memory_size": self.memory_size,
 					"model_path": model_path,
@@ -380,7 +377,7 @@ class RAINBOWAgent(nn.Module):
 		with tqdm(total=self.max_env_steps, desc="Training Progress") as pbar:
 			while env_steps < self.max_env_steps:
 
-				obs, _ = env.reset(seed=SEED+env_steps)
+				obs, _ = env.reset(seed=self.SEED+env_steps)
 				done = False
 				episode_reward = 0
 				episode_length = 0
@@ -414,12 +411,12 @@ class RAINBOWAgent(nn.Module):
 
 				if store_episode_rewards:
 					ep_rewards.append(episode_reward)
-					if len(ep_rewards) > 50:
+					if len(ep_rewards) > 10:
 						ep_rewards.pop(0)
 					avg_reward = np.mean(ep_rewards)
 					if self.wandb_upload:
 						wandb.log({
-							"avg_episode_reward_50": avg_reward,
+							"mean_episode_return": avg_reward,
 						})
 
 				pbar.update(episode_length)
@@ -448,6 +445,9 @@ class RAINBOWAgent(nn.Module):
 					"env": env_name,
 					"architecture": "RAINBOW",
 					"model_path": model_path,
+					"seed": self.SEED,
+					"action_dim": self.action_dim,
+					"state_dim": self.state_dim
 				}
 			)
 			run.name = f"{env_name}_test_{n_episodes}_episodes"
@@ -458,7 +458,7 @@ class RAINBOWAgent(nn.Module):
 
 		for episode in range(n_episodes):
 
-			obs, info = env.reset(seed=SEED + episode)
+			obs, info = env.reset(seed=self.SEED + episode)
 			done = False
 			episode_reward = 0
 			episode_length = 0

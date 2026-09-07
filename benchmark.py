@@ -37,7 +37,7 @@ def main():
     env = gym.make(args.env, render_mode=args.render_mode, max_episode_steps=args.max_episode_steps)
 
     # env = gym.make("InvertedPendulum-v5", max_episode_steps=500)
-    # env = gym.make("Ant-v5", max_episode_steps=1000, exclude_current_positions_from_observation=False)
+    # env = gym.make("AntMaze_UMaze-v5", max_episode_steps=1000, render_mode="human")#, exclude_current_positions_from_observation=False)
 
     # env = gym.make("MiniGrid-FourRooms-v0")
     # env = FullyObsWrapper(env)  # Use fully observable state instead of partial observations
@@ -132,39 +132,44 @@ def main():
             # "WANDB_UPLOAD": True,
             # "SAVE_MODEL": True,
 
-            "LR": 0.0009745064427874296,                       # OC, FuN, A2C
-            # "LR_ACTOR": 2e-4,                 # DDPG, TD3, HIRO, HAC
-            # "LR_CRITIC": 2e-4,                # DDPG, TD3, HIRO, HAC
-            # "GAMMA": 0.99,                    # OC, DDPG
+            # "LR": 0.0027146217565951563,                       # OC, FuN, A2C
+            # "LR_ACTOR": 3e-4,                 # DDPG, TD3, HIRO, HAC
+            # "LR_CRITIC":5e-4,                # DDPG, TD3, HIRO, HAC
+            # "GAMMA": 0.9856086048981776,                    # OC, DDPG
             # "GAMMA_M": 0.99,                  # FuN, HIRO
             # "GAMMA_W": 0.95,                  # FuN, HIRO
             # "LAM": 0.97,
             # "PPO_EPOCHS": 8,                    # PPO
 
-            # "NUM_OPTIONS": 1,                 # OC
-            # "TERM_REG": 2e-4,                 # OC
-            # "EPSILON_DECAY": 0.9952,           # OC
+            # "NUM_OPTIONS": 2,                 # OC
+            # "TERM_REG": 0.2033193945729349,                 # OC
+            # "EPSILON_DECAY": 0.995,           # OC
+            # "ENT_COEF": 0.0006482097535918288,                 # OC, A2C
             
             # "MAX_ACTION": 3.0,                # DDPG, TD3
-            # "TAU": 0.0042039333644093325,                      # DDPG, TD3 
-            "ENT_COEF": 5e-4,                 # OC, A2C
+            # "TAU": 0.0095,                      # DDPG, TD3 
+            # 'BATCH_SIZE': 256,                     # DDPG, TD3, HIRO, HAC
+            # 'UPDATE_DELAY': 1,                    # TD3
+            
 
             # "GOAL_DIM": 76,                  # FuN, HIRO
             # "N_GOALS": 1,                    # FuN
-            "SUBGOAL_HORIZON": 2,            # FuN, HIRO, HAC
+            "SUBGOAL_HORIZON": 5,            # FuN, HIRO, HAC
 
             # "MAX_EPISODES": 2000,               # OC, DDPG, TD3, HIRO, HAC
             # "N_UPDATES": 1000,                # FuN
 
-            "ALPHA": 0.001,                     # FuN, HAC, HER
-            # 'EXPL_NOISE_MANAGER': 0.935,          # HIRO, HAC
-            # 'EXPL_NOISE_WORKER': 0.17866545336681583,           # HIRO, HAC
-            # 'GOAL_BOUND': 0.8,                  # HIRO, HAC
-            # 'GOAL_THRESHOLD': 0.6933242578871506,              # HAC
+            "ALPHA": 0.32005274471106426,                     # FuN, HAC, HER, RAINBOW
+            'EXPL_NOISE_MANAGER': 2.48831780754188,          # HIRO, HAC
+            'EXPL_NOISE_WORKER': 0.15717830566980356,           # HIRO, HAC, TD3
+            'GOAL_BOUND': 1.30548020791509,                  # HIRO, HAC
+            'GOAL_THRESHOLD': 1.8773099880152544,              # HAC
             # 'N_LEVELS': 3,                      # HAC
-            "MAX_ENV_STEPS": 1e6,              # OC, DDPG, TD3, HIRO, HAC
-            # 'SUBGOAL_TEST_FREQ': 0.4,                  # HAC
-            # 'BATCH_SIZE': 256,                     # DDPG, TD3, HIRO, HAC
+            "MAX_ENV_STEPS": 1e5,              # OC, DDPG, TD3, HIRO, HAC
+            'SUBGOAL_TEST_FREQ': 0.5825870809087,                  # HAC
+            # 'N_STEP': 5,                        # RAINBOW
+            # 'ATOM_SIZE': 101,                    # RAINBOW
+            # 'V_MAX': 300,                     # RAINBOW            
         }
 
 
@@ -186,16 +191,14 @@ def main():
 
     if args.hyperparameter_tuning:
         print(f"Performing hyperparameter tuning for agent: {agent_name} on environment: {env.spec.id}")
-
-        if args.hyperparams_json:
-            with open(args.hyperparams_json, "r") as f:
+        if args.hyperparams_sweep_json:
+            with open(args.hyperparams_sweep_json, "r") as f:
                 hyperparameters_sweep = json.load(f)
-        elif args.hyperparams_yaml:
-            with open(args.hyperparams_yaml, "r") as f:
+        elif args.hyperparams_sweep_yaml:
+            with open(args.hyperparams_sweep_yaml, "r") as f:
                 hyperparameters_sweep = yaml.safe_load(f)
         else:
             hyperparameters_sweep = None
-
         hyperparameter_tuning(env=env, args=args, state_dim=obs_shape, action_dim=action_shape, hyp_sweep=hyperparameters_sweep, device=device)
 
 
@@ -246,14 +249,14 @@ def main():
     if args.test_agent_stats:
         print(f"Testing agent: {agent_name} on environment: {env.spec.id} for statistics collection")
 
-        delays = [0, 1, 2, 4, 8, 16, 32]  # List of delay steps to test
-        # noises = [0.01, 0.05, 0.1, 0.2, 0.5]  # List of noise standard deviations to test
-        # for noise in noises:
-        for delay in delays:
+        # delays = [1, 2, 4, 8, 16, 32]  # List of delay steps to test
+        noises = [0.01, 0.05, 0.1, 0.2, 0.5]  # List of noise standard deviations to test
+        for noise in noises:
+        # for delay in delays:
             # env = gym.make("InvertedPendulum-v5", max_episode_steps=500, render_mode="rgb_array")
             env = gym.make(args.env, render_mode=args.render_mode, max_episode_steps=args.max_episode_steps)
-            env = delay_injection(env, delay_steps=delay, delay_type='obs')  # Inject a delay in the environment obs/act
-            # env = noise_injection(env, noise_std=noise, noise_type='obs')  # Inject Gaussian noise into the environment obs/act
+            # env = delay_injection(env, delay_steps=delay, delay_type='obs')  # Inject a delay in the environment obs/act
+            env = noise_injection(env, noise_std=noise, noise_type='obs')  # Inject Gaussian noise into the environment obs/act
 
             # run = wandb.init(
             #     entity = "arkapatra31-ust",
@@ -333,14 +336,14 @@ def main():
             plt.ylabel('Frequency')
 
             plt.tight_layout()
-            os.makedirs(f'CP_stats_figs_{n_episodes}/{agent.__class__.__name__}', exist_ok=True)  # Create the directory if it doesn't exist
-            plt.savefig(f'CP_stats_figs_{n_episodes}/{agent.__class__.__name__}/{env.spec.id}_{agent.__class__.__name__}.png')  # Save the figure
+            os.makedirs(f'stats/CP_stats_figs_{n_episodes}/{agent.__class__.__name__}', exist_ok=True)  # Create the directory if it doesn't exist
+            plt.savefig(f'stats/CP_stats_figs_{n_episodes}/{agent.__class__.__name__}/{env.spec.id}_{agent.__class__.__name__}.png')  # Save the figure
             # plt.show()  # Show the figure
 
             write_stats = True  # Set to True if you want to write stats to a file
             if write_stats:
                 # Append mode: adds to end of existing file
-                with open(f"CP_stats_figs_{n_episodes}/PPO-CP-stats-{n_episodes}.txt", "a", encoding="utf-8") as file:
+                with open(f"stats/CP_stats_figs_{n_episodes}/{args.agent.upper()}-CP-stats-{n_episodes}.txt", "a", encoding="utf-8") as file:
                     file.write(f"Environment: {env.spec.id}\tAgent: {agent.__class__.__name__}\tn_episodes: {n_episodes}\n")
                     file.write("-" * 80 + "\n")  # Separator line for clarity
                     # file.write("Episode Rewards: " + str(episode_rewards) + "\n")
@@ -405,13 +408,14 @@ def env_wrapper(env):
         # obs = obs / 255.0  # Normalize pixel values to [0, 1]
         # obs = obs.sum(axis=0)/3  # Convert the image to a single channel (grayscale)
         observation = obs['observation']  # Extract the observation from the dictionary
-        desired_goal = obs['desired_goal']  # Extract the desired goal from the dictionary
+        # desired_goal = obs['desired_goal']  # Extract the desired goal from the dictionary
         achieved_goal = obs['achieved_goal']  # Extract the achieved goal from the dictionary
         observation = np.concatenate([achieved_goal,observation])  # Concatenate the observation and desired goal
         # obs = obs[:29]
+        # observation = obs  # Use the original observation without modification
         observation = np.concatenate([observation, np.zeros(observation.shape)])
-        return observation, desired_goal, achieved_goal
-        # return obs, None, None  # Return None for desired_goal and achieved_goal since they are not used
+        # return observation, desired_goal, achieved_goal
+        return observation, None, None  # Return None for desired_goal and achieved_goal since they are not used
 
     def step(self, action):
         obs, reward, terminated, truncated, info = original_step(action)
@@ -419,6 +423,7 @@ def env_wrapper(env):
         info['desired_goal'] = desired_goal  # Add the desired goal to the info dictionary
         info['achieved_goal'] = achieved_goal  # Add the achieved goal to the info
         return obs, reward, terminated, truncated, info
+    
     env.step = step.__get__(env)  # Bind the new step method to the environment instance
 
     def reset(self, seed=None, options=None):
@@ -677,14 +682,17 @@ def hyperparameter_tuning(env, args, state_dim, action_dim, hyp_sweep, device="c
             'method': 'bayes',
             'metric': {'name': 'mean_episode_return', 'goal': 'maximize'},
             'parameters': {
-                'LR': {'distribution': 'uniform', 'min': 1e-3, 'max': 4e-3},
+                # 'LR': {'distribution': 'uniform', 'min': 1e-3, 'max': 4e-3},
+                # 'GAMMA': {'distribution': 'uniform', 'min': 0.95, 'max': 0.99},
+                'GAMMA_W': {'distribution': 'uniform', 'min': 0.9, 'max': 0.95},
+                'GAMMA_M': {'distribution': 'uniform', 'min': 0.95, 'max': 0.99},
                 # 'NUM_OPTIONS': {'values': [2, 3, 4]},
-                # 'TERM_REG': {'distribution': 'log_uniform_values', 'min': 1e-4, 'max': 2e-4},
-                'ENT_COEF': {'distribution': 'log_uniform_values', 'min': 3e-4, 'max': 6e-3},
+                # 'TERM_REG': {'distribution': 'log_uniform_values', 'min': 3e-4, 'max': 3e-1},
+                # 'ENT_COEF': {'distribution': 'log_uniform_values', 'min': 1e-4, 'max': 1e-2},
                 # 'EPSILON_DECAY': {'distribution': 'uniform', 'min': 0.99, 'max': 0.999},
                 # 'GOAL_DIM': {'values': [2, 4]},
                 # 'N_GOALS': {'values': [1, 2, 4]},
-                # 'LR_ACTOR': {'distribution': 'log_uniform_values', 'min': 1e-5, 'max': 3e-4},
+                # 'LR_ACTOR': {'distribution': 'log_uniform_values', 'min': 3e-5, 'max': 3e-4},
                 # 'LR_CRITIC': {'distribution': 'log_uniform_values', 'min': 1e-4, 'max': 1e-3},
                 # 'EXPL_NOISE_MANAGER': {'distribution': 'uniform', 'min': 0.3, 'max': 0.6},
                 # 'EXPL_NOISE_WORKER': {'distribution': 'uniform', 'min': 0.05, 'max': 0.25},
@@ -693,7 +701,7 @@ def hyperparameter_tuning(env, args, state_dim, action_dim, hyp_sweep, device="c
                 # 'GOAL_THRESHOLD': {'distribution': 'uniform', 'min': 0.1, 'max': 2.0},
                 # 'N_LEVELS': {'values': [2, 3]},
                 # 'SUBGOAL_TEST_FREQ': {'distribution': 'uniform', 'min': 0.1, 'max': 0.9},
-                'ALPHA': {'distribution': 'uniform', 'min': 0.1, 'max': 0.4},
+                # 'ALPHA': {'distribution': 'uniform', 'min': 0.1, 'max': 0.4},
                 # 'LAM': {'distribution': 'uniform', 'min': 0.95, 'max': 0.99},
                 # "BATCH_SIZE": {"values": [64, 128, 256]},
                 # 'UPDATE_DELAY': {'values': [1, 2, 4]},
@@ -704,42 +712,25 @@ def hyperparameter_tuning(env, args, state_dim, action_dim, hyp_sweep, device="c
         }
 
     # Initialize a W&B sweep
-    sweep_id = wandb.sweep(sweep_config, project=args.wandb_project, entity=args.wandb_entity)
+    sweep_id = wandb.sweep(sweep_config, project=f"{args.agent}-HT-{args.env}-xx", entity=args.wandb_entity)
 
     # Define the training function for the sweep
     def train_sweep():
+
         seed_everything()
+        env.action_space.seed(SEED)
+        env.observation_space.seed(SEED)
+
         with wandb.init() as run:
             config = wandb.config
             print(f"Starting a new sweep run with hyperparameter config:\n {config}")
 
             hyperparams = {
-                "LR": config.get("LR", 1e-3),
-                "NUM_OPTIONS": config.get("NUM_OPTIONS", 4),
-                "TERM_REG": config.get("TERM_REG", 0.01),
-                "ENT_COEF": config.get("ENT_COEF", 0.01),
-                "EPSILON_DECAY": config.get("EPSILON_DECAY", 0.995),
-                "ALPHA": config.get("ALPHA", 0.01),
-                "GOAL_DIM": config.get("GOAL_DIM", 8),
-                "N_GOALS": config.get("N_GOALS", 4),
-                "GOAL_BOUND": config.get("GOAL_BOUND", 2.0),
-                "LR_ACTOR": config.get("LR_ACTOR", 1e-3),
-                "LR_CRITIC": config.get("LR_CRITIC", 1e-3),
-                "EXPL_NOISE_MANAGER": config.get("EXPL_NOISE_MANAGER", 1.5),
-                "EXPL_NOISE_WORKER": config.get("EXPL_NOISE_WORKER", 0.5),
-                "SUBGOAL_HORIZON": config.get("SUBGOAL_HORIZON", 10),
-                "N_LEVELS": config.get("N_LEVELS", 2),
-                "GOAL_THRESHOLD": config.get("GOAL_THRESHOLD", 0.5),
-                "LAM": config.get("LAM", 0.95),
-                "BATCH_SIZE": config.get("BATCH_SIZE", 256),
-                "UPDATE_DELAY": config.get("UPDATE_DELAY", 2),
-                "TAU": config.get("TAU", 0.005),
-                "PPO_EPOCHS": config.get("PPO_EPOCHS", 4),
-                "WANDB_UPLOAD": config.get("WANDB_UPLOAD", True),
-                "N_UPDATES": config.get("N_UPDATES", 100),
-                "MAX_ENV_STEPS": config.get("MAX_ENV_STEPS", 1e5),
-                "MAX_ACTION": config.get("MAX_ACTION", 3.0),
+                'MAX_ENV_STEPS': 1e5,
+                'WANDB_UPLOAD': True,
             }
+            for key in config.keys():
+                hyperparams[key] = config[key]
             # wandb.run.name = f"{hyperparams['LR']:.0e}_{hyperparams['ENT_COEF']:.0e}_{env.spec.id}"
 
             agent_name = args.agent.upper()+"Agent"
@@ -780,7 +771,8 @@ def parse_args():
     parser.add_argument("--env_wrapper", action="store_true", help="Use environment wrapper for preprocessing observations")
     parser.add_argument("--percept", action="store_true", help="Use perceptual module in the agent")
     
-    
+
+    parser.add_argument("--max_env_steps", type=int, help="Maximum number of steps per episode for the environment")
     parser.add_argument("--train_agent", action="store_true", help="Train the agent")
     parser.add_argument("--hyperparams_json", type=str, default=None, help="Path to a JSON file containing hyperparameters for training")
     parser.add_argument("--hyperparams_yaml", type=str, default=None, help="Path to a YAML file containing hyperparameters for training")
@@ -798,7 +790,7 @@ def parse_args():
     parser.add_argument("--write_stats", action="store_true", help="Write statistics to a file during testing")
 
     parser.add_argument("--hyperparameter_tuning", action="store_true", help="Perform hyperparameter tuning")
-    parser.add_argument("--sweep_count", type=int, default=10, help="Number of hyperparameter sweep runs")
+    parser.add_argument("--sweep_count", type=int, default=20, help="Number of hyperparameter sweep runs")
     parser.add_argument("--hyperparams_sweep_json", type=str, default=None, help="Path to a JSON file containing hyperparameters sweep dictionary for hyperparameter tuning")
     parser.add_argument("--hyperparams_sweep_yaml", type=str, default=None, help="Path to a YAML file containing hyperparameters sweep dictionary for hyperparameter tuning")
 

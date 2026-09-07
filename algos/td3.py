@@ -12,48 +12,6 @@ import wandb
 import os
 import cv2
 
-SEED = 31
-np.random.seed(SEED)
-# 1. Set seeds for PyTorch (CPU and GPU)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
-
-# 2. Ensure deterministic behavior for CuDNN
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-
-# --- Neural Networks ---
-# class Actor(torch_nn.Module):
-#     def __init__(self, state_dim, action_dim, max_action):
-#         super(Actor, self).__init__()
-#         self.fc1 = torch_nn.Linear(state_dim, 400)
-#         self.fc2 = torch_nn.Linear(400, 300)
-#         self.fc3 = torch_nn.Linear(300, action_dim)
-#         self.max_action = max_action
-
-#     def forward(self, state):
-#         x = F.relu(self.fc1(state))
-#         x = F.relu(self.fc2(x))
-#         # BipedalWalker actions are bounded between -1 and 1
-#         x = self.max_action * torch.tanh(self.fc3(x))
-#         return x
-
-# class Critic(torch_nn.Module):
-#     def __init__(self, state_dim, action_dim):
-#         super(Critic, self).__init__()
-#         # State and action are concatenated before passing into the first hidden layer
-#         self.fc1 = torch_nn.Linear(state_dim + action_dim, 400)
-#         self.fc2 = torch_nn.Linear(400, 300)
-#         self.fc3 = torch_nn.Linear(300, 1)
-
-#     def forward(self, state, action):
-#         x = torch.cat([state, action], dim=1)
-#         x = F.relu(self.fc1(x))
-#         x = F.relu(self.fc2(x))
-#         x = self.fc3(x)
-#         return x
-
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim, max_action):
         super(Actor, self).__init__()
@@ -134,6 +92,7 @@ class TD3Agent(nn.Module):
         self.BUFFER_SIZE = hyperparams.get("BUFFER_SIZE", int(1e6))  # Replay buffer size
         self.MAX_ACTION = hyperparams.get("MAX_ACTION", 1.0)            # Maximum action value (for BipedalWalker, actions are bounded between -1 and 1)
         self.MAX_ENV_STEPS = hyperparams.get("MAX_ENV_STEPS", 1e6)     # Maximum number of environment steps to train
+        self.SEED = hyperparams.get("SEED", 31)  # Seed for reproducibility
 
         self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
         self.save_model = hyperparams.get("SAVE_MODEL", False)
@@ -217,6 +176,7 @@ class TD3Agent(nn.Module):
                 config={
                     "env": env_name,
                     "algo": "TD3",
+                    "seed": self.SEED,
                     "state_dim": self.state_dim,
                     "action_dim": self.action_dim,
                     "actor_lr": self.LR_ACTOR,
@@ -245,7 +205,7 @@ class TD3Agent(nn.Module):
 
         env_steps = 0
 
-        obs, _ = env.reset(seed=SEED)
+        obs, _ = env.reset(seed=self.SEED)
         for i in tqdm(range(self.RANDOM_START_STEPS)):
             action = env.action_space.sample()
             next_obs, reward, terminated, truncated, info = env.step(action)
@@ -254,7 +214,7 @@ class TD3Agent(nn.Module):
             obs = next_obs
             env_steps += 1
             if done:
-                obs, _ = env.reset(seed=SEED)
+                obs, _ = env.reset(seed=self.SEED)
 
         episode_returns = []
         episode_lengths = []
@@ -263,7 +223,7 @@ class TD3Agent(nn.Module):
 
             while env_steps < self.MAX_ENV_STEPS:
                 
-                obs, info = env.reset(seed=SEED+env_steps)
+                obs, info = env.reset(seed=self.SEED+env_steps)
                 episode_reward = 0
                 episode_length = 0
                 done = False
@@ -399,7 +359,11 @@ class TD3Agent(nn.Module):
                     # Track hyperparameters and run metadata.
                     config={
                         "env": env_name,
+                        "algo": "TD3",
+                        "seed": self.SEED,
                         "model_path": model_path,
+                        "state_dim": self.state_dim,
+                        "action_dim": self.action_dim,
                     },
                 )
                 run.name = f"TD3_Test_Episode_{episode + 1}"
@@ -408,7 +372,7 @@ class TD3Agent(nn.Module):
             episode_reward = 0
             episode_length = 0
             renders = [] 
-            obs, _ = env.reset(seed=SEED + episode)
+            obs, _ = env.reset(seed=self.SEED + episode)
             
             while not done:
 

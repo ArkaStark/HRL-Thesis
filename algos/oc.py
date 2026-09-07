@@ -11,15 +11,6 @@ import os
 from tqdm import tqdm
 
 SEED = 31
-np.random.seed(SEED)
-# 1. Set seeds for PyTorch (CPU and GPU)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
-
-# 2. Ensure deterministic behavior for CuDNN
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
 
 class Reshape(nn.Module):
     """Utility module to reshape tensors in Sequential models."""
@@ -79,6 +70,7 @@ class OCAgent(nn.Module):
         self.MAX_ENV_STEPS = hyperparams.get("MAX_ENV_STEPS", 1e6)
         self.TERM_REG = hyperparams.get("TERM_REG", 1e-3)
         self.TARGET_UPDATE_FREQ = hyperparams.get("TARGET_UPDATE_FREQ", 200)
+        self.SEED = hyperparams.get("SEED", 31)
         
         self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
         self.save_model = hyperparams.get("SAVE_MODEL", False)
@@ -90,17 +82,17 @@ class OCAgent(nn.Module):
             state_dim = 128  # Update state_dim after perception network
             self.features = nn.Sequential(
                 self.perception,
-                nn.Linear(state_dim, 128),
+                nn.Linear(state_dim, 256),
                 nn.ReLU(),
-                nn.Linear(128, 128),
+                nn.Linear(256, 128),
                 nn.ReLU()
             )
         else:
             # Shared feature extractor
             self.features = nn.Sequential(
-                nn.Linear(state_dim, 128),
+                nn.Linear(state_dim, 256),
                 nn.ReLU(),
-                nn.Linear(128, 128),
+                nn.Linear(256, 128),
                 nn.ReLU()
             )
         
@@ -181,9 +173,11 @@ class OCAgent(nn.Module):
     def train_agent(self, env, store_episode_rewards=False):
 
         env_name = env.spec.id
+        model_path = None
 
-        model_path = f"Weights/{env_name}_OC/model_{self.MAX_ENV_STEPS}steps__nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}_xxx.pt"
-        os.makedirs(os.path.dirname(model_path), exist_ok=True)
+        if self.save_model:
+            model_path = f"Weights/{env_name}_OC/{self.MAX_ENV_STEPS}steps__nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}-a"
+            os.makedirs(model_path, exist_ok=True)
 
         if self.wandb_upload:
             # Start a new wandb run to track this script.
@@ -196,6 +190,9 @@ class OCAgent(nn.Module):
                 config={
                     "env": env_name,
                     "algo": "OC",
+                    "seed": self.SEED,
+                    "state_dim": self.state_dim,
+                    "action_dim": self.action_dim,
                     "num_options": self.NUM_OPTIONS,
                     "learning_rate": self.LR,
                     "gamma": self.GAMMA,
@@ -221,7 +218,7 @@ class OCAgent(nn.Module):
         with tqdm(total=self.MAX_ENV_STEPS, desc="Training Progress") as pbar:
             while env_steps < self.MAX_ENV_STEPS:
 
-                state, _ = env.reset(seed=SEED + env_steps)  # Ensure reproducibility by varying the seed per episode
+                state, _ = env.reset(seed=self.SEED + env_steps)  # Ensure reproducibility by varying the seed per episode
                 state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
                 
                 episode_reward = 0
@@ -322,8 +319,8 @@ class OCAgent(nn.Module):
                             else:
                                 current_option = next_q_vals.argmax(dim=1).item()
 
-                    if self.save_model and env_steps % 100000 == 0:  
-                        torch.save(self.state_dict(), model_path)
+                    if self.save_model and env_steps % 10000 == 0:  
+                        torch.save(self.state_dict(), f"{model_path}/model.pt")
 
                 # Decay epsilon
                 epsilon = max(self.EPSILON_MIN, epsilon * self.EPSILON_DECAY)
@@ -354,11 +351,11 @@ class OCAgent(nn.Module):
 
         if model_path is None:
             # model_path = f"Weights/{env_name}_OC/model_{self.MAX_EPISODES}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}_x.pt"
-            model_path = "Weights/MiniGrid-FourRooms-v0_OC/model_2000_nOpt_4_LR_0.0003_TermReg_0.005_x.pt"
+            model_path = f"Weights/{env_name}_OC/{self.MAX_ENV_STEPS}steps__nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.4f}_TermReg_{self.TERM_REG:.3f}-a"
 
         """ load network weights """
         # print(f"Loading model from {model_path}")
-        self.load_state_dict(torch.load(model_path))
+        self.load_state_dict(torch.load(f"{model_path}/model.pt", map_location=self.device))
 
         if record_stats:
             episode_rewards = []
@@ -378,13 +375,17 @@ class OCAgent(nn.Module):
                     # Track hyperparameters and run metadata.
                     config={
                         "env": env_name,
+                        "algo": "OC",
                         "num_options": self.NUM_OPTIONS,
                         "model_path": model_path,
+                        "seed": self.SEED,
+                        "state_dim": self.state_dim,
+                        "action_dim": self.action_dim,
                     },
                 )
                 # run.name = f"{env_name}_{episode + 1}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.6f}_TermReg_{self.TERM_REG:.3f}"
 
-            state, _ = env.reset(seed=SEED + episode)  # Ensure reproducibility by varying the seed per episode
+            state, _ = env.reset(seed=self.SEED + episode)  # Ensure reproducibility by varying the seed per episode
             state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
             
             episode_reward = 0

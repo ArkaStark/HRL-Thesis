@@ -12,28 +12,17 @@ import wandb
 import os
 import cv2
 
-SEED = 31
-np.random.seed(SEED)
-# 1. Set seeds for PyTorch (CPU and GPU)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
-
-# 2. Ensure deterministic behavior for CuDNN
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-
 
 # --- Neural Networks ---
 class Actor(nn.Module):
     def __init__(self, state_dim, action_dim, max_action):
         super(Actor, self).__init__()
         self.net = nn.Sequential(
-            nn.Linear(state_dim, 400),
+            nn.Linear(state_dim, 256),
             nn.ReLU(),
-            nn.Linear(400, 300),
+            nn.Linear(256, 128),
             nn.ReLU(),
-            nn.Linear(300, action_dim)
+            nn.Linear(128, action_dim)
         )
         self.max_action = max_action
 
@@ -44,18 +33,18 @@ class Critic(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(Critic, self).__init__()
         self.q1 = nn.Sequential(
-            nn.Linear(state_dim + action_dim, 400),
+            nn.Linear(state_dim + action_dim, 256),
             nn.ReLU(),
-            nn.Linear(400, 300),
+            nn.Linear(256, 128),
             nn.ReLU(),
-            nn.Linear(300, 1)
+            nn.Linear(128, 1)
         )
         self.q2 = nn.Sequential(
-            nn.Linear(state_dim + action_dim, 400),
+            nn.Linear(state_dim + action_dim, 256),
             nn.ReLU(),
-            nn.Linear(400, 300),
+            nn.Linear(256, 128),
             nn.ReLU(),
-            nn.Linear(300, 1)
+            nn.Linear(128, 1)
         )
 
     def forward(self, state, action):
@@ -76,12 +65,13 @@ class ReplayBuffer:
         self._shapes = None
 
     def add(self, state, action, reward, next_state, done, gamma):
-        state = np.asarray(state, dtype=np.float32)
-        action = np.asarray(action, dtype=np.float32)
-        next_state = np.asarray(next_state, dtype=np.float32)
-        reward = float(reward)
-        done = float(done)
-        gamma = float(gamma)
+
+        # state = np.asarray(state, dtype=np.float32)
+        # action = np.asarray(action, dtype=np.float32)
+        # next_state = np.asarray(next_state, dtype=np.float32)
+        # reward = float(reward)
+        # done = float(done)
+        # gamma = float(gamma)
 
         shapes = (state.shape, action.shape, next_state.shape)
         if self._shapes is None:
@@ -101,14 +91,14 @@ class ReplayBuffer:
 
     def sample(self, batch_size):
         batch = random.sample(self.storage, batch_size)
-        s, a, r, ns, d, g = zip(*batch)
+        s, a, r, ns, d, g = map(np.asarray, zip(*batch))
         return (
-            torch.FloatTensor(np.stack(s)).to(self.device),
-            torch.FloatTensor(np.stack(a)).to(self.device),
-            torch.FloatTensor(np.asarray(r, dtype=np.float32)).unsqueeze(1).to(self.device),
-            torch.FloatTensor(np.stack(ns)).to(self.device),
-            torch.FloatTensor(np.asarray(d, dtype=np.float32)).unsqueeze(1).to(self.device),
-            torch.FloatTensor(np.asarray(g, dtype=np.float32)).unsqueeze(1).to(self.device)
+            torch.as_tensor(s, dtype=torch.float32, device=self.device),
+            torch.as_tensor(a, dtype=torch.float32, device=self.device),
+            torch.as_tensor(r, dtype=torch.float32, device=self.device).unsqueeze(1),
+            torch.as_tensor(ns, dtype=torch.float32, device=self.device),
+            torch.as_tensor(d, dtype=torch.float32, device=self.device).unsqueeze(1),
+            torch.as_tensor(g, dtype=torch.float32, device=self.device).unsqueeze(1)
         )
 
     def __len__(self):
@@ -120,12 +110,12 @@ class TD3(nn.Module):
         super(TD3, self).__init__()
         # --- Hyperparameters ---
         self.LR_ACTOR = hyperparams.get("LR_ACTOR", 1e-4)
-        self.LR_CRITIC = hyperparams.get("LR_CRITIC", 3e-4)
-        self.TAU = hyperparams.get("TAU", 0.005)             # Soft update parameter for target networks
+        self.LR_CRITIC = hyperparams.get("LR_CRITIC", 5e-4)
+        self.TAU = hyperparams.get("TAU", 0.0095)             # Soft update parameter for target networks
         self.BATCH_SIZE = hyperparams.get("BATCH_SIZE", 64)         # Mini-batch size
         self.POLICY_NOISE = hyperparams.get("POLICY_NOISE", 0.2)      # Noise added to target policy during critic update
         self.NOISE_CLIP = hyperparams.get("NOISE_CLIP", 0.5)        # Range to clip target policy noise
-        self.POLICY_FREQ = hyperparams.get("POLICY_FREQ", 2)        # Frequency of delayed policy updates
+        self.POLICY_FREQ = hyperparams.get("UPDATE_DELAY", 2)        # Frequency of delayed policy updates
 
 
         self.actor = Actor(state_dim, action_dim, max_action).to(device)
@@ -154,9 +144,12 @@ class TD3(nn.Module):
         with torch.no_grad():
             return self.actor(state).cpu().data.numpy().flatten()
 
-    def train(self, replay_buffer):
+    def train(self, replay_buffer, max_action=None):
         if len(replay_buffer) < self.BATCH_SIZE:
             return
+
+        if max_action is not None:
+            self.max_action = max_action
 
         self.total_it += 1
         state, action, reward, next_state, done, gamma = replay_buffer.sample(self.BATCH_SIZE)
@@ -194,11 +187,10 @@ class HACAgent(nn.Module):
 
         # --- Hyperparameters ---
         # self.MAX_EPISODES = hyperparams.get("MAX_EPISODES", 2000)     # Maximum number of episodes to train
-        self.RANDOM_START_STEPS = hyperparams.get("RANDOM_START_STEPS", 1000)    # Number of random steps to populate the replay buffer before training
-        self.MAX_ACTION = hyperparams.get("MAX_ACTION", 1.0)          # Maximum action value (for BipedalWalker, actions are bounded between -1 and 1)
-        self.BUFFER_SIZE = hyperparams.get("BUFFER_SIZE", int(1e6))  # Replay buffer size
+        
+        
         self.GOAL_THRESHOLD = hyperparams.get("GOAL_THRESHOLD", 0.1)      # Threshold for considering the goal achieved
-        self.NUM_UPDATES = hyperparams.get("NUM_UPDATES", 100)          # Number of DDPG updates per episode
+        self.NUM_UPDATES = hyperparams.get("NUM_UPDATES", 10)          # Number of DDPG updates per episode
         self.ALPHA = hyperparams.get("ALPHA", 0.01)   # Weight for episode reward
         self.N_LEVELS = hyperparams.get("N_LEVELS", 2) # Number of levels in the hierarchy
         self.SUBGOAL_HORIZON = hyperparams.get("SUBGOAL_HORIZON", 10)    # Number of steps to achieve a subgoal
@@ -212,14 +204,19 @@ class HACAgent(nn.Module):
         self.save_model = hyperparams.get("SAVE_MODEL", False)  # Whether to save the model weights after training
 
         # --- TD3 Hyperparameters ---
-        self.LR_ACTOR = hyperparams.get("LR_ACTOR", 1e-4)
-        self.LR_CRITIC = hyperparams.get("LR_CRITIC", 3e-4)
+        self.LR_ACTOR = hyperparams.get('LR_ACTOR', 1e-4)
+        self.LR_CRITIC = hyperparams.get('LR_CRITIC', 5e-4)
+        self.TAU = hyperparams.get('TAU', 0.0095)
+        self.BATCH_SIZE = hyperparams.get('BATCH_SIZE', 64)
+        self.POLICY_NOISE = hyperparams.get('POLICY_NOISE', 0.2)
+        self.NOISE_CLIP = hyperparams.get('NOISE_CLIP', 0.5)
+        self.POLICY_FREQ = hyperparams.get('UPDATE_DELAY', 2)
+
+        self.MAX_ACTION = hyperparams.get("MAX_ACTION", 3.0)          # Maximum action value 
+        self.RANDOM_START_STEPS = hyperparams.get("RANDOM_START_STEPS", 1000)    # Number of random steps to populate the replay buffer before training
+        self.BUFFER_SIZE = hyperparams.get("BUFFER_SIZE", int(1e5))  # Replay buffer size
         self.GAMMA = hyperparams.get("GAMMA", 0.99)            # Discount factor
-        self.TAU = hyperparams.get("TAU", 0.005)             # Soft update parameter for target networks
-        self.BATCH_SIZE = hyperparams.get("BATCH_SIZE", 64)         # Mini-batch size
-        self.POLICY_NOISE = hyperparams.get("POLICY_NOISE", 0.2)      # Noise added to target policy during critic update
-        self.NOISE_CLIP = hyperparams.get("NOISE_CLIP", 0.5)        # Range to clip target policy noise
-        self.POLICY_FREQ = hyperparams.get("POLICY_FREQ", 2)        # Frequency of delayed policy updates
+        self.SEED = hyperparams.get("SEED", 31)  # Random seed for reproducibility
 
 
         self.state_dim = state_dim
@@ -256,16 +253,14 @@ class HACAgent(nn.Module):
             action = self.levels[level].select_action(level_input)
             if not subgoal_test:
                 action += np.random.normal(0, self.EXPL_NOISE_WORKER, size=self.action_dim)
-            return np.clip(action, -1.0, 1.0)
+            return np.clip(action, -self.MAX_ACTION, self.MAX_ACTION)
 
         level_input = np.concatenate([state, goal])
         subgoal = self.levels[level].select_action(level_input)
         if not subgoal_test:
             subgoal += np.random.normal(0, self.EXPL_NOISE_MANAGER, size=self.goal_dim)
-        # return np.clip(subgoal, -self.SUBGOAL_BOUND, self.SUBGOAL_BOUND)
-        return subgoal
-            
-        return action
+        return np.clip(subgoal, -self.SUBGOAL_BOUND, self.SUBGOAL_BOUND)
+
     
     def compute_her_reward(self, current_state, desired_goal, next_state, dense=False):
         # Compute the reward based on the achieved goal and desired goal
@@ -442,6 +437,9 @@ class HACAgent(nn.Module):
                 config={
                     "env": env_name,
                     "architecture": "HAC",
+                    "seed": self.SEED,
+                    "state_dim": self.state_dim,
+                    "action_dim": self.action_dim,
                     "actor_lr": self.LR_ACTOR,
                     "critic_lr": self.LR_CRITIC,
                     "gamma": self.GAMMA,
@@ -489,10 +487,11 @@ class HACAgent(nn.Module):
 
         self.env_steps = 0
         episode_rewards = []
+        self.MAX_ACTION = env.action_space.high[0] if isinstance(env.action_space, gym.spaces.Box) else 1.0
 
         with tqdm(total=self.MAX_ENV_STEPS, desc="Training Progress") as pbar:
             while self.env_steps < self.MAX_ENV_STEPS:
-                obs, info = env.reset()
+                obs, info = env.reset(seed = self.SEED + self.env_steps)
                 self.episode_reward = 0
                 self.episode_length = 0
                 self.done = False
@@ -504,6 +503,10 @@ class HACAgent(nn.Module):
                     next_obs = self.train_level(env, self.N_LEVELS-1, obs, info, [goal])  # Start training from the highest level
                     obs = next_obs
 
+                    # Update the agent
+                    for level in range(self.N_LEVELS):
+                        self.levels[level].train(self.replay_buffers[level], max_action=self.MAX_ACTION)
+
                 if self.wandb_upload:
                     wandb.log({
                         "episode_reward": self.episode_reward,
@@ -512,25 +515,26 @@ class HACAgent(nn.Module):
 
                 if store_episode_rewards:
                     episode_rewards.append(self.episode_reward)
-                    if len(episode_rewards) > 50:
+                    if len(episode_rewards) > 10:
                         episode_rewards.pop(0)
                     avg_reward = np.mean(episode_rewards)
                     if self.wandb_upload:
                         wandb.log({
-                            "avg_episode_reward_50": avg_reward,
+                            "mean_episode_return": avg_reward,
                         })
 
                 # Update the agent after each episode
-                for i in range(self.NUM_UPDATES):
-                    # self.ddpg_update()
-                    for level in range(self.N_LEVELS):
-                        self.levels[level].train(self.replay_buffers[level])
+                # for i in range(self.NUM_UPDATES):
+                #     # self.ddpg_update()
+                #     for level in range(self.N_LEVELS):
+                #         self.levels[level].train(self.replay_buffers[level], max_action=self.MAX_ACTION)
 
-                if self.save_model and self.env_steps > 500000:
-                    torch.save(self.state_dict(), f"{model_path}/model.pt")
                     # print(f"Saved model weights at episode {episode + 1} to {model_path}")
                 
                 pbar.update(self.episode_length)
+
+        if self.save_model:
+            torch.save(self.state_dict(), f"{model_path}/model.pt")
 
         if self.wandb_upload:
             run.finish()
@@ -556,6 +560,9 @@ class HACAgent(nn.Module):
                     "env": env_name,
                     "architecture": "HAC",
                     "model_path": model_path,
+                    "seed": self.SEED,
+                    "action_dim": self.action_dim,
+                    "state_dim": self.state_dim
                 }
             )
             run.name = f"{env_name}_test_{n_episodes}_episodes"
@@ -566,7 +573,7 @@ class HACAgent(nn.Module):
 
         for episode in range(n_episodes):
 
-            obs, info = env.reset(seed=SEED + episode)
+            obs, info = env.reset(seed=self.SEED + episode)
             self.done = False
             self.episode_reward = 0
             self.episode_length = 0

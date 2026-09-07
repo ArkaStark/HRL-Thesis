@@ -12,17 +12,6 @@ from torch.distributions.normal import Normal
 
 import wandb
 import cv2
-
-SEED = 31
-np.random.seed(SEED)
-# 1. Set seeds for PyTorch (CPU and GPU)
-torch.manual_seed(SEED)
-torch.cuda.manual_seed(SEED)
-torch.cuda.manual_seed_all(SEED)  # For multi-GPU setups
-
-# 2. Ensure deterministic behavior for CuDNN
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
     
 class PPOAgent(nn.Module):
     """Proximal Policy Optimization with Advantage Actor-Critic algorithm."""
@@ -45,6 +34,7 @@ class PPOAgent(nn.Module):
         self.actor_lr = hyperparams.get("LR_ACTOR", 0.00001)
         self.lam = hyperparams.get("LAM", 0.95)
         self.eps = hyperparams.get("EPS", 1e-6)
+        self.SEED = hyperparams.get("SEED", 31)
 
         self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
         self.save_model = hyperparams.get("SAVE_MODEL", False)
@@ -59,11 +49,7 @@ class PPOAgent(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 128),
             nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
-            nn.Linear(32, 1),  # estimate V(s)
+            nn.Linear(128, 1),  # estimate V(s)
         ]
 
         actor_layers = [
@@ -71,17 +57,13 @@ class PPOAgent(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 128),
             nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 32),
-            nn.ReLU(),
         ]
 
         # define actor and critic networks
         self.critic = nn.Sequential(*critic_layers).to(self.device)
         self.actor = nn.Sequential(*actor_layers).to(self.device)
-        self.actor_mean = nn.Linear(32, n_actions).to(self.device)
-        self.actor_std = nn.Linear(32, n_actions).to(self.device)
+        self.actor_mean = nn.Linear(128, n_actions).to(self.device)
+        self.actor_std = nn.Linear(128, n_actions).to(self.device)
 
         # define optimizers for actor and critic
         self.critic_optim = optim.Adam(self.critic.parameters(), lr=self.critic_lr)
@@ -260,6 +242,9 @@ class PPOAgent(nn.Module):
                 config={
                     "env": env_name,
                     "algo": "PPO",
+                    "seed": self.SEED,
+                    "state_dim": self.obs_shape,
+                    "action_dim": self.action_shape,
                     "n_updates": self.n_updates,
                     "n_steps_per_update": self.n_steps_per_update,
                     "ppo_epochs": self.ppo_epochs,
@@ -306,7 +291,7 @@ class PPOAgent(nn.Module):
 
             # at the start of training reset all envs to get an initial state
             if epoch == 0:
-                states, info = env.reset(seed=SEED)
+                states, info = env.reset(seed=self.SEED)
 
             # play n steps in our parallel environments to collect data
             for step in range(self.n_steps_per_update):
@@ -344,7 +329,7 @@ class PPOAgent(nn.Module):
                     )
 
                 if done:
-                    env.reset(seed=SEED+epoch)
+                    env.reset(seed=self.SEED+epoch)
                     if self.wandb_upload:
                         wandb.log({"episode_rewards": ep_reward, #.mean().item(),
                                    "episode_length": ep_length
@@ -438,11 +423,15 @@ class PPOAgent(nn.Module):
                         "env": env_name,
                         "algo": "PPO",
                         "model_path": model_path,
+                        "seed": self.SEED,
+                        "state_dim": self.obs_shape,
+                        "action_dim": self.action_shape,
                     },
                 )
+                run.name = f"{env_name}_{episode + 1}_PPO"
 
             # get an initial state
-            state, info = env.reset(seed=SEED+episode)
+            state, info = env.reset(seed=self.SEED+episode)
             ep_reward = 0
             ep_length = 0
 

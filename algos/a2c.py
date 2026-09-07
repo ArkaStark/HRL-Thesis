@@ -40,20 +40,20 @@ class A2CAgent(nn.Module):
         self.action_dim = n_actions
 
         critic_layers = [
-            nn.Linear(n_features, 32),
+            nn.Linear(n_features, 256),
             nn.ReLU(),
-            nn.Linear(32, 32),
+            nn.Linear(256, 128),
             nn.ReLU(),
-            nn.Linear(32, 1),  # estimate V(s)
+            nn.Linear(128, 1),  # estimate V(s)
         ]
 
         actor_layers = [
-            nn.Linear(n_features, 32),
+            nn.Linear(n_features, 256),
             nn.ReLU(),
-            nn.Linear(32, 32),
+            nn.Linear(256, 128),
             nn.ReLU(),
             nn.Linear(
-                32, n_actions
+                128, n_actions
             ),  # estimate action logits (will be fed into a softmax later)
         ]
 
