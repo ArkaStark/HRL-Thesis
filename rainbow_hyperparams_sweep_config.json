@@ -6,21 +6,24 @@
     },
     "parameters": {
         "LR": {
-            "distribution": "uniform",
+            "distribution": "log_uniform_values",
             "min": 1e-05,
             "max": 0.01
         },
         "N_STEP": {
             "values": [
                 1,
-                3,
-                5
+                2,
+                5, 
+                10
             ]
         },
         "ATOM_SIZE": {
             "values": [
-                51,
-                101
+                2,
+                3,
+                4,
+                8
             ]
         },
         "V_MAX": {

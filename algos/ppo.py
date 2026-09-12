@@ -35,6 +35,7 @@ class PPOAgent(nn.Module):
         self.lam = hyperparams.get("LAM", 0.95)
         self.eps = hyperparams.get("EPS", 1e-6)
         self.SEED = hyperparams.get("SEED", 31)
+        self.MAX_ACTION = hyperparams.get("MAX_ACTION", 1.0)
 
         self.wandb_upload = hyperparams.get("WANDB_UPLOAD", False)
         self.save_model = hyperparams.get("SAVE_MODEL", False)
@@ -123,7 +124,7 @@ class PPOAgent(nn.Module):
         # print(f"Action means: {action_means.cpu().detach().numpy()} and stddevs: {action_stds.cpu().detach().numpy()}")
         dist = Normal(action_means, action_stds)
         pre_tanh_actions = dist.sample()
-        actions = torch.tanh(pre_tanh_actions)  # clip actions to be within the action space bounds
+        actions = self.MAX_ACTION * torch.tanh(pre_tanh_actions)  # clip actions to be within the action space bounds
         log_prob = dist.log_prob(pre_tanh_actions) - torch.log(1 - actions.pow(2) + self.eps)  # adjust log-prob for tanh transformation
         log_prob = log_prob.sum(dim=-1)  # sum log-probs for multi-dimensional action space
 
@@ -146,6 +147,7 @@ class PPOAgent(nn.Module):
         """
         values, action_means, action_stds = self.forward(x)
         dist = Normal(action_means, action_stds)
+        actions = actions / self.MAX_ACTION  # scale actions back to the range of the tanh function
         actions = torch.clamp(actions, -1+self.eps, 1-self.eps)  # ensure actions are within the valid range for atanh
         pre_tanh_actions = torch.atanh(actions)  # inverse of tanh to get the original action values before clipping
         log_prob = dist.log_prob(pre_tanh_actions) - torch.log(1 - actions.pow(2) + self.eps)  # adjust log-prob for tanh transformation
@@ -451,13 +453,14 @@ class PPOAgent(nn.Module):
                 ep_reward += reward
                 ep_length += 1
 
-                frame = env.render()
-                if frame is not None:
-                    # W&B handles videos best when frames are uint8 CHW tensors.
-                    if frame.shape[-1] == 4:
-                        frame = frame[:, :, :3]
-                    frame = np.asarray(frame, dtype=np.uint8)
-                    renders.append(frame)
+                if self.wandb_upload:
+                    frame = env.render()
+                    if frame is not None:
+                        # W&B handles videos best when frames are uint8 CHW tensors.
+                        if frame.shape[-1] == 4:
+                            frame = frame[:, :, :3]
+                        frame = np.asarray(frame, dtype=np.uint8)
+                        renders.append(frame)
                 # cv2.imshow("LunarLander", env.render())
                 # cv2.waitKey(1)
                 if self.wandb_upload:

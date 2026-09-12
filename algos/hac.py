@@ -212,7 +212,7 @@ class HACAgent(nn.Module):
         self.NOISE_CLIP = hyperparams.get('NOISE_CLIP', 0.5)
         self.POLICY_FREQ = hyperparams.get('UPDATE_DELAY', 2)
 
-        self.MAX_ACTION = hyperparams.get("MAX_ACTION", 3.0)          # Maximum action value 
+        self.MAX_ACTION = hyperparams.get("MAX_ACTION", 1.0)          # Maximum action value 
         self.RANDOM_START_STEPS = hyperparams.get("RANDOM_START_STEPS", 1000)    # Number of random steps to populate the replay buffer before training
         self.BUFFER_SIZE = hyperparams.get("BUFFER_SIZE", int(1e5))  # Replay buffer size
         self.GAMMA = hyperparams.get("GAMMA", 0.99)            # Discount factor

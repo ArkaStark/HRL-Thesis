@@ -6,7 +6,7 @@
     },
     "parameters": {
         "LR": {
-            "distribution": "uniform",
+            "distribution": "log_uniform_values",
             "min": 1e-05,
             "max": 0.01
         },

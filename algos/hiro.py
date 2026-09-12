@@ -446,7 +446,7 @@ class HIROAgent(nn.Module):
             )
             run.name = f"{env_name}_{self.MAX_ENV_STEPS}_{self.LR_ACTOR:.4f}_{self.LR_CRITIC:.4f}"
 
-        load_model = False
+        load_model = False  # Set to True to load a pre-trained model, False to train from scratch
         if load_model:
             load_model_path = "Weights/Ant-v5-GC_TD3/alr_5.346635183767254e-05_clr_0.0002923700418487162_xxx/model.pt"
             print(f"Loading model from {load_model_path}")
@@ -530,7 +530,7 @@ class HIROAgent(nn.Module):
                         )
                         self.off_policy_correction()
 
-                    if self.save_model and env_steps % 100000 == 0:
+                    if self.save_model and env_steps % 10000 == 0:
                         torch.save(self.state_dict(), f"{model_path}/model.pt")
                         # print(f"Model saved to {model_path}")
 
@@ -562,6 +562,7 @@ class HIROAgent(nn.Module):
             model_path = f"Weights/{env_name}_HIRO_weights/HIRO_{env_name}_C_{self.C}_gb_{self.GOAL_BOUND}"
 
         if os.path.exists(model_path):
+            print(f"Loading model from {model_path}")
             self.load_state_dict(torch.load(f"{model_path}/model.pt", map_location=self.device))
         else:
             print("Weights not found. Please train the agent first.")
@@ -651,6 +652,7 @@ class HIROAgent(nn.Module):
                 episode_lengths.append(episode_length)
             
             print(f"Episode {episode + 1}: Total Reward: {episode_reward}, Length: {episode_length}")
+
         env.close()
         if record_stats:
             return episode_rewards, episode_lengths

@@ -51,7 +51,7 @@ def main():
             'metric': {'name': 'mean_episode_return', 'goal': 'maximize'},
 
             'parameters': {
-            'LR': {'distribution': 'uniform', 'min': 1e-5, 'max': 1e-2},
+            'LR': {'distribution': 'log_uniform_values', 'min': 1e-5, 'max': 1e-2},
             # 'NUM_OPTIONS': {'values': [2, 3, 4]},
             # 'TERM_REG': {'distribution': 'log_uniform_values', 'min': 1e-4, 'max': 3e-1},
             # 'ENT_COEF': {'distribution': 'log_uniform_values', 'min': 1e-4, 'max': 1e-2},

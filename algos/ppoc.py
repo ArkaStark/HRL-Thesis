@@ -84,8 +84,8 @@ class PPOCAgent(nn.Module):
         self.gamma = h.get("GAMMA", 0.99)
         self.gae_lambda = h.get("LAM", 0.95)
         self.num_options = int(h.get("NUM_OPTIONS", 4))
-        self.max_env_steps = int(h.get("MAX_ENV_STEPS", 1_000_000))
-        self.n_steps_per_update = int(h.get("N_STEPS_PER_UPDATE", 2_048))
+        self.max_env_steps = int(h.get("MAX_ENV_STEPS", 1e6))
+        self.n_steps_per_update = int(h.get("N_STEPS_PER_UPDATE", 2048))
         self.ppo_epochs = int(h.get("PPO_EPOCHS", 10))
         self.minibatch_size = int(h.get("MINIBATCH_SIZE", 64))
         self.clip_coef = h.get("CLIP_COEF", 0.2)
@@ -253,10 +253,13 @@ class PPOCAgent(nn.Module):
         model_path = os.path.join("Weights", f"{env_name}_PPOC", "model.pt")
         if self.save_model:
             os.makedirs(os.path.dirname(model_path), exist_ok=True)
-        run = wandb.init(project="PPOC-Train", config={"env": env_name, "algo": "PPOC"}) if self.wandb_upload else None
+        run = wandb.init(project="PPOC-Train", 
+                         config={"env": env_name,
+                                 "algo": "PPOC"}) if self.wandb_upload else None
         state, _ = env.reset(seed=SEED)
         current_option, episode_reward, episode_length = None, 0.0, 0
         reward_history, env_steps, updates = [], 0, 0
+        current_option_length = 0
         progress = tqdm(total=self.max_env_steps, desc="PPOC training")
         try:
             while env_steps < self.max_env_steps:
@@ -279,13 +282,18 @@ class PPOCAgent(nn.Module):
                     rollout.continuation_masks.append(continue_option)
                     state, episode_reward, episode_length = next_state, episode_reward + float(reward), episode_length + 1
                     env_steps += 1; progress.update(1)
+                    current_option_length += 1
                     if done:
                         reward_history.append(episode_reward)
                         if self.wandb_upload:
                             wandb.log({"episode_reward": episode_reward, "episode_length": episode_length, "env_steps": env_steps})
-                        state, _ = env.reset()
+                        state, _ = env.reset(seed=SEED+env_steps)
                         current_option, episode_reward, episode_length = None, 0.0, 0
+                        current_option_length = 0
                     elif not continue_option:
+                        if self.wandb_upload:
+                            wandb.log({"option_length": current_option_length, "current_option": current_option})
+                        current_option_length = 0
                         with torch.no_grad():
                             current_option = self.forward(next_tensor)[0].argmax(1).item()
                 metrics = self._update(self._make_batch(rollout)); updates += 1

@@ -35,6 +35,8 @@ def main():
     # DECLARE ENVIRONMENT
 
     env = gym.make(args.env, render_mode=args.render_mode, max_episode_steps=args.max_episode_steps)
+    # env = gym.make("LunarLanderContinuous-v3", enable_wind=False, wind_power=1.0, turbulence_power=0.1, render_mode="human")
+
 
     # env = gym.make("InvertedPendulum-v5", max_episode_steps=500)
     # env = gym.make("AntMaze_UMaze-v5", max_episode_steps=1000, render_mode="human")#, exclude_current_positions_from_observation=False)
@@ -71,8 +73,8 @@ def main():
     # )
     # wandb.run.name = f"{env.spec.id}"
 
-    # obs = env.reset(seed=SEED)
-    # env.action_space.seed(SEED)
+    # obs = env.reset(seed=args.seed)
+    # env.action_space.seed(args.seed)
     # env_step = 0
     # print(f"Initial Observation: {obs}")
     # done = False
@@ -102,8 +104,8 @@ def main():
     else:
         action_shape = env.action_space.shape[0]
 
-    env.action_space.seed(SEED)
-    env.observation_space.seed(SEED)
+    env.action_space.seed(args.seed)
+    env.observation_space.seed(args.seed)
 
     print(f"Environment: {env.spec.id}")
     print(f"Observation type: {env.observation_space}, Action type: {env.action_space}")
@@ -132,19 +134,19 @@ def main():
             # "WANDB_UPLOAD": True,
             # "SAVE_MODEL": True,
 
-            # "LR": 0.0027146217565951563,                       # OC, FuN, A2C
-            # "LR_ACTOR": 3e-4,                 # DDPG, TD3, HIRO, HAC
-            # "LR_CRITIC":5e-4,                # DDPG, TD3, HIRO, HAC
+            "LR": 0.00023275480397030168,                       # OC, FuN, A2C
+            # "LR_ACTOR": 1e-4,                 # DDPG, TD3, HIRO, HAC
+            # "LR_CRITIC": 1e-3,                # DDPG, TD3, HIRO, HAC
             # "GAMMA": 0.9856086048981776,                    # OC, DDPG
             # "GAMMA_M": 0.99,                  # FuN, HIRO
             # "GAMMA_W": 0.95,                  # FuN, HIRO
-            # "LAM": 0.97,
+            # "LAM": 0.977,
             # "PPO_EPOCHS": 8,                    # PPO
 
-            # "NUM_OPTIONS": 2,                 # OC
-            # "TERM_REG": 0.2033193945729349,                 # OC
-            # "EPSILON_DECAY": 0.995,           # OC
-            # "ENT_COEF": 0.0006482097535918288,                 # OC, A2C
+            "NUM_OPTIONS": 2,                 # OC
+            "TERM_REG": 0.05701939380921457,                 # OC
+            "EPSILON_DECAY": 0.997939454548163,           # OC
+            "ENT_COEF": 0.01086741436914558,                 # OC, A2C, PPO
             
             # "MAX_ACTION": 3.0,                # DDPG, TD3
             # "TAU": 0.0095,                      # DDPG, TD3 
@@ -154,23 +156,25 @@ def main():
 
             # "GOAL_DIM": 76,                  # FuN, HIRO
             # "N_GOALS": 1,                    # FuN
-            "SUBGOAL_HORIZON": 5,            # FuN, HIRO, HAC
+            # "SUBGOAL_HORIZON": 2,            # FuN, HIRO, HAC
 
             # "MAX_EPISODES": 2000,               # OC, DDPG, TD3, HIRO, HAC
             # "N_UPDATES": 1000,                # FuN
 
-            "ALPHA": 0.32005274471106426,                     # FuN, HAC, HER, RAINBOW
-            'EXPL_NOISE_MANAGER': 2.48831780754188,          # HIRO, HAC
-            'EXPL_NOISE_WORKER': 0.15717830566980356,           # HIRO, HAC, TD3
-            'GOAL_BOUND': 1.30548020791509,                  # HIRO, HAC
-            'GOAL_THRESHOLD': 1.8773099880152544,              # HAC
+            # "ALPHA": 0.2,                     # FuN, HAC, HER, RAINBOW
+            # 'EXPL_NOISE_MANAGER': 0.0011991061952753303,          # HIRO, HAC
+            # 'EXPL_NOISE_WORKER': 0.00741985116880456,           # HIRO, HAC, TD3
+            # 'GOAL_BOUND': 1.8779283695598328,                  # HIRO, HAC
+            # 'GOAL_THRESHOLD': 0.6933242578871506,              # HAC
             # 'N_LEVELS': 3,                      # HAC
-            "MAX_ENV_STEPS": 1e5,              # OC, DDPG, TD3, HIRO, HAC
-            'SUBGOAL_TEST_FREQ': 0.5825870809087,                  # HAC
-            # 'N_STEP': 5,                        # RAINBOW
-            # 'ATOM_SIZE': 101,                    # RAINBOW
-            # 'V_MAX': 300,                     # RAINBOW            
+            "MAX_ENV_STEPS": 5e5,              # OC, DDPG, TD3, HIRO, HAC
+            # 'SUBGOAL_TEST_FREQ': 0.4,                  # HAC
+            # 'N_STEP': 10,                        # RAINBOW
+            # 'ATOM_SIZE': 4,                    # RAINBOW
+            # 'V_MAX': 100,                     # RAINBOW            
         }
+
+        hyperparameters['SEED'] = args.seed
 
 
     # INITIALIZE AGENTS
@@ -255,7 +259,7 @@ def main():
         # for delay in delays:
             # env = gym.make("InvertedPendulum-v5", max_episode_steps=500, render_mode="rgb_array")
             env = gym.make(args.env, render_mode=args.render_mode, max_episode_steps=args.max_episode_steps)
-            # env = delay_injection(env, delay_steps=delay, delay_type='obs')  # Inject a delay in the environment obs/act
+            # env = delay_injection(env, delay_steps=delay, delay_type='act')  # Inject a delay in the environment obs/act
             env = noise_injection(env, noise_std=noise, noise_type='obs')  # Inject Gaussian noise into the environment obs/act
 
             # run = wandb.init(
@@ -264,8 +268,8 @@ def main():
             # )
             # wandb.run.name = f"{env.spec.id}"
 
-            # obs = env.reset(seed=SEED)
-            # env.action_space.seed(SEED)
+            # obs = env.reset(seed=args.seed)
+            # env.action_space.seed(args.seed)
             # print(f"Initial Observation: {obs}")
             # done = False
             # step_count = 0
@@ -336,15 +340,16 @@ def main():
             plt.ylabel('Frequency')
 
             plt.tight_layout()
-            os.makedirs(f'stats/CP_stats_figs_{n_episodes}/{agent.__class__.__name__}', exist_ok=True)  # Create the directory if it doesn't exist
-            plt.savefig(f'stats/CP_stats_figs_{n_episodes}/{agent.__class__.__name__}/{env.spec.id}_{agent.__class__.__name__}.png')  # Save the figure
+            os.makedirs(f'stats/XP_stats_figs_{n_episodes}/{agent.__class__.__name__}', exist_ok=True)  # Create the directory if it doesn't exist
+            plt.savefig(f'stats/XP_stats_figs_{n_episodes}/{agent.__class__.__name__}/{env.spec.id}_{agent.__class__.__name__}.png')  # Save the figure
             # plt.show()  # Show the figure
 
             write_stats = True  # Set to True if you want to write stats to a file
             if write_stats:
                 # Append mode: adds to end of existing file
-                with open(f"stats/CP_stats_figs_{n_episodes}/{args.agent.upper()}-CP-stats-{n_episodes}.txt", "a", encoding="utf-8") as file:
+                with open(f"stats/XP_stats_figs_{n_episodes}/{args.agent.upper()}-LL-stats-{n_episodes}.txt", "a", encoding="utf-8") as file:
                     file.write(f"Environment: {env.spec.id}\tAgent: {agent.__class__.__name__}\tn_episodes: {n_episodes}\n")
+                    file.write(f"Model Path: {model_path}\n")
                     file.write("-" * 80 + "\n")  # Separator line for clarity
                     # file.write("Episode Rewards: " + str(episode_rewards) + "\n")
                     # file.write("Episode Lengths: " + str(episode_lengths) + "\n")
@@ -408,14 +413,14 @@ def env_wrapper(env):
         # obs = obs / 255.0  # Normalize pixel values to [0, 1]
         # obs = obs.sum(axis=0)/3  # Convert the image to a single channel (grayscale)
         observation = obs['observation']  # Extract the observation from the dictionary
-        # desired_goal = obs['desired_goal']  # Extract the desired goal from the dictionary
+        desired_goal = obs['desired_goal']  # Extract the desired goal from the dictionary
         achieved_goal = obs['achieved_goal']  # Extract the achieved goal from the dictionary
-        observation = np.concatenate([achieved_goal,observation])  # Concatenate the observation and desired goal
+        # observation = np.concatenate([achieved_goal,observation])  # Concatenate the observation and desired goal
         # obs = obs[:29]
         # observation = obs  # Use the original observation without modification
-        observation = np.concatenate([observation, np.zeros(observation.shape)])
-        # return observation, desired_goal, achieved_goal
-        return observation, None, None  # Return None for desired_goal and achieved_goal since they are not used
+        # observation = np.concatenate([observation, np.zeros(observation.shape)])
+        return observation, desired_goal, achieved_goal
+        # return observation, None, None  # Return None for desired_goal and achieved_goal since they are not used
 
     def step(self, action):
         obs, reward, terminated, truncated, info = original_step(action)
@@ -522,7 +527,7 @@ def env_wrapper(env):
 #     return env
 
 
-def delay_injection(env, delay_steps=5, delay_type="obs"):
+def delay_injection(env, delay_steps=5, delay_type="obs", fixed_delay=True):
 
     if delay_steps == 0:
         return env
@@ -552,7 +557,11 @@ def delay_injection(env, delay_steps=5, delay_type="obs"):
 
             env.obs_buffer.append(obs)
 
-            delayed_obs = env.obs_buffer[0]
+            if fixed_delay:
+                delayed_obs = env.obs_buffer[0]
+            else:
+                # Randomly select a delayed observation from the buffer
+                delayed_obs = env.obs_buffer[np.random.randint(0, len(env.obs_buffer))]
 
             return (
                 delayed_obs,
@@ -590,7 +599,11 @@ def delay_injection(env, delay_steps=5, delay_type="obs"):
                 np.asarray(action).copy()
             )
 
-            delayed_action = env.action_buffer[0]
+            if fixed_delay:
+                delayed_action = env.action_buffer[0]
+            else:
+                # Randomly select a delayed action from the buffer
+                delayed_action = env.action_buffer[np.random.randint(0, len(env.action_buffer))]
 
             return original_step(
                 delayed_action
@@ -599,6 +612,8 @@ def delay_injection(env, delay_steps=5, delay_type="obs"):
     env.reset = reset
     env.step = step
     env.spec.id = env.spec.id + f"-delay-{delay_type}-{delay_steps}"
+    if fixed_delay:
+        env.spec.id += "-fixed"
 
     return env
     
@@ -712,21 +727,21 @@ def hyperparameter_tuning(env, args, state_dim, action_dim, hyp_sweep, device="c
         }
 
     # Initialize a W&B sweep
-    sweep_id = wandb.sweep(sweep_config, project=f"{args.agent}-HT-{args.env}-xx", entity=args.wandb_entity)
+    sweep_id = wandb.sweep(sweep_config, project=f"{args.agent}-HT-{args.env}", entity=args.wandb_entity)
 
     # Define the training function for the sweep
     def train_sweep():
 
-        seed_everything()
-        env.action_space.seed(SEED)
-        env.observation_space.seed(SEED)
+        seed_everything(args.seed)
+        env.action_space.seed(args.seed)
+        env.observation_space.seed(args.seed)
 
         with wandb.init() as run:
             config = wandb.config
             print(f"Starting a new sweep run with hyperparameter config:\n {config}")
 
             hyperparams = {
-                'MAX_ENV_STEPS': 1e5,
+                'MAX_ENV_STEPS': 1e6,
                 'WANDB_UPLOAD': True,
             }
             for key in config.keys():
@@ -753,19 +768,20 @@ def seed_everything(seed=SEED):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
+    torch.use_deterministic_algorithms(True)  # Ensure deterministic behavior for reproducibility
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Benchmarking RL Agents")
-    shtab.add_argument_to(parser, ["-s", "--print-completion"])
 
     parser.add_argument("--env", type=str, default="CartPole-v1", help="Gym environment ID")
     parser.add_argument("--max_episode_steps", type=int, default=1000, help="Maximum number of steps per episode")
     parser.add_argument("--render_mode", type=str, default=None, choices=[None, "human", "rgb_array"], help="Render mode for the environment")
-    parser.add_argument("--agent", type=str, default="a2c", choices=["a2c", "ppo", "oc", "rainbow", "td3", "fun", "hiro", "hac"], help="RL agent to use")
+    parser.add_argument("--agent", type=str, default="a2c", choices=["a2c", "ppo", "oc", "rainbow", "td3", "fun", "hiro", "hac", "ppoc"], help="RL agent to use")
     parser.add_argument("--disable_cuda", action="store_true", help="Disable CUDA and use CPU instead")
     parser.add_argument("--seed", type=int, default=SEED, help="Random seed for reproducibility")
     parser.add_argument("--env_wrapper", action="store_true", help="Use environment wrapper for preprocessing observations")
@@ -781,10 +797,8 @@ def parse_args():
     parser.add_argument("--test_agent_stats", action="store_true", help="Test the agent and record statistics")  
     parser.add_argument("--model_path", type=str, default=None, help="Path to the trained model for testing")
     parser.add_argument("--test_episodes", type=int, default=1000, help="Number of episodes for testing")
-    parser.add_argument("--delay_steps", type=int, default=0, help="Number of delay steps to inject into the environment")
-    parser.add_argument("--delay_type", type=str, default="obs", choices=["obs", "act"], help="Type of delay to inject into the environment")
-    parser.add_argument("--noise_std", type=float, default=0.0, help="Standard deviation of Gaussian noise to inject into the environment")
-    parser.add_argument("--noise_type", type=str, default="obs", choices=["obs", "act"], help="Type of noise to inject into the environment")
+    parser.add_argument("--dist_levels", type=list, default=[0], help="Disturbance levels to inject into the environment")
+    parser.add_argument("--dist_type", type=str, default="obs-delay", choices=["obs-delay", "act-delay", "obs-noise", "act-noise"], help="Type of disturbance to inject into the environment")
     # parser.add_argument("--record_stats", action="store_true", help="Record statistics during testing")
     parser.add_argument("--save_stats_figs", action="store_true", help="Save statistics figures during testing")
     parser.add_argument("--write_stats", action="store_true", help="Write statistics to a file during testing")

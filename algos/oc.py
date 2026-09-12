@@ -58,6 +58,7 @@ class OCAgent(nn.Module):
     def __init__(self, state_dim, action_dim, percept=False, device="cpu", hyperparams={}):
         super(OCAgent, self).__init__()
         self.action_dim = action_dim
+        self.state_dim = state_dim
         self.device = device
 
         self.LR = hyperparams.get("LR", 3e-4)
@@ -300,12 +301,10 @@ class OCAgent(nn.Module):
                     if self.wandb_upload:
                         wandb.log({
                             "epsilon": epsilon,
-                            "current_option": current_option,
                             "critic_loss": critic_loss.item(),
                             "actor_loss": actor_loss.item(),
                             "termination_loss": termination_loss.item(),
                             "term_prob_next": term_prob_next.item(),
-                            "curr_op_len": curr_op_len
                         })
                     
                     if not done:
@@ -313,6 +312,8 @@ class OCAgent(nn.Module):
                         term_dist = Bernoulli(probs=term_prob_next.detach())
                         if term_dist.sample().item() == 1.0:
                             # Option terminated, pick a new one (epsilon-greedy)
+                            if self.wandb_upload:
+                                wandb.log({"current_option": current_option, "curr_op_len": curr_op_len})
                             curr_op_len = 0
                             if np.random.rand() < epsilon:
                                 current_option = np.random.randint(self.NUM_OPTIONS)
