@@ -92,13 +92,14 @@ class Manager(nn.Module):
         self.eps = 0.01  # Exploration probability for the manager
 
 
-    def forward(self, z, hidden_M, t, reset_value_grad):
+
+    def forward(self, z, hidden_M, t, reset_value_grad, random_goal):
         s = self.f_Mspace(z) # Latent state representation [batch x d]
 
         g_hat, hidden_M = self.f_Mrnn(s, hidden_M, t) 
         g = F.normalize(g_hat, dim=-1)  
 
-        if (self.eps > torch.rand(1)[0]):
+        if random_goal and (self.eps > torch.rand(1)[0]):
             # To encourage exploration in transition policy,
             # at every step with a small probability ε
             # we emit a random goal sampled from a uni-variate Gaussian.
@@ -273,12 +274,12 @@ class FUNAgent(nn.Module):
     #     entropy = action_dist.entropy()
     #     return action.item(), log_prob, entropy, value_W, states
 
-    def select_goal_action(self, x, states, t, reset_value_grad=False):
+    def select_goal_action(self, x, states, t, reset_value_grad=False, random_goal=True):
         x = torch.as_tensor(x, dtype=torch.float32).to(self.device)
         hidden_M = states[1]
         z = self.perception(x) # Latent state representation [batch x d]
         # z = Reshape((-1, self.d))(x) # Use raw observation as input to manager and worker
-        value_M, g, s, hidden_M = self.manager(z, hidden_M, t, reset_value_grad)
+        value_M, g, s, hidden_M = self.manager(z, hidden_M, t, reset_value_grad, random_goal)
         states = (states[0], hidden_M)
         self.goals.append(g)  # Store the latest goal for the worker
 
@@ -584,6 +585,7 @@ class FUNAgent(nn.Module):
                     entity="arkapatra31-ust",
                     # Set the wandb project where this run will be logged.
                     project="FuN-Test",
+                    group=f"{env_name}_fun",
                     # Track hyperparameters and run metadata.
                     config={
                         "algo": "FUN",
@@ -605,6 +607,12 @@ class FUNAgent(nn.Module):
             t = 0
             episode_reward = 0
             renders = []  # To store frames for video logging
+            
+            goals = []
+            values_M = []
+            values_W = []
+            actions = []
+            rewards = []
 
             while not done:
                 with torch.no_grad():
@@ -612,9 +620,16 @@ class FUNAgent(nn.Module):
 
                     # value_M, c_goals, s, states = agent.select_goals(obs, states)
                     # action, log_prob, entropy, value_W, states = agent.select_action(obs, c_goals, states)
-                    value_M, value_W, action, log_prob, entropy, states, g, s = self.select_goal_action(obs, states, t)
+                    value_M, value_W, action, log_prob, entropy, states, g, s = self.select_goal_action(obs, states, t, random_goal=False)
                     # action = env.action_space.sample()
                     obs, reward, terminated, truncated, info = env.step(action)
+
+                    goals.append(g.cpu().numpy().squeeze())
+                    values_M.append(value_M.item())
+                    values_W.append(value_W.item())
+                    actions.append(action)
+                    rewards.append(reward)
+
                 # print(f"Reward received: {reward}")
                 # print(f"Terminated: {terminated}, Truncated: {truncated}")
                 t += 1
@@ -630,7 +645,18 @@ class FUNAgent(nn.Module):
                         frame = np.asarray(frame, dtype=np.uint8)
                         renders.append(frame)
 
+            pca_goals, eigenvalues = pca_numpy(np.array(goals), n_components=2)
+            print(f"Eigenvalues of PCA: {eigenvalues}")
             if self.wandb_upload:
+                for i in range(pca_goals.shape[0]):
+                    wandb.log({
+                        "pca_goal_1": pca_goals[i, 0],
+                        "pca_goal_2": pca_goals[i, 1],
+                        "value_M": values_M[i],
+                        "value_W": values_W[i],
+                        "action": actions[i],
+                        "reward": rewards[i]
+                    })
                 if renders:
                     renders = [
                         cv2.resize(render, (500, 500), interpolation=cv2.INTER_AREA)
@@ -679,3 +705,25 @@ class FUNAgent(nn.Module):
 
     
 
+def pca_numpy(X, n_components):
+    # 1. Mean center the data
+    X_meaned = X - np.mean(X, axis=0)
+    
+    # 2. Compute covariance matrix
+    cov_mat = np.cov(X_meaned, rowvar=False)
+    
+    # 3. Compute eigenvalues and eigenvectors
+    eigenvalues, eigenvectors = np.linalg.eigh(cov_mat)
+    
+    # 4. Sort indices by eigenvalues in descending order
+    idx = np.argsort(eigenvalues)[::-1]
+    eigenvalues = eigenvalues[idx]
+    eigenvectors = eigenvectors[:, idx]
+    
+    # 5. Select top n_components
+    eigenvector_subset = eigenvectors[:, :n_components]
+    
+    # 6. Transform data
+    X_reduced = np.dot(eigenvector_subset.T, X_meaned.T).T
+    
+    return X_reduced, eigenvalues[:n_components]

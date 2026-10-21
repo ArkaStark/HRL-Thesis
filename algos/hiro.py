@@ -406,7 +406,7 @@ class HIROAgent(nn.Module):
         model_path = None
 
         if self.save_model:
-            model_path = f"Weights/{env_name}_HIRO_weights/HIRO_{env_name}_C_{self.C}_gb_{self.GOAL_BOUND}_xx"
+            model_path = f"Weights/{env_name}_HIRO_weights/HIRO_{env_name}_C_{self.C}_gb_{self.GOAL_BOUND}_xxx"
             os.makedirs(model_path, exist_ok=True)
 
         if self.wandb_upload:

@@ -8,12 +8,12 @@
         "EXPL_NOISE_MANAGER": {
             "distribution": "uniform",
             "min": 0.01,
-            "max": 0.2
+            "max": 3
         },
         "EXPL_NOISE_WORKER": {
             "distribution": "uniform",
-            "min": 0.05,
-            "max": 0.25
+            "min": 0.01,
+            "max": 3
         },
         "SUBGOAL_HORIZON": {
             "values": [

@@ -387,8 +387,8 @@ class PPOAgent(nn.Module):
             if self.save_model and (epoch + 1) % 100 == 0:
                 torch.save(self.state_dict(), f"{model_path}/model.pt")
 
-            if len(ep_rewards)>10:
-                mean_reward = np.mean(ep_rewards[-10:])
+            if len(ep_rewards)>50:
+                mean_reward = np.mean(ep_rewards[-50:])
                 if self.wandb_upload:
                     run.log({"mean_episode_return": mean_reward})
 
@@ -464,9 +464,9 @@ class PPOAgent(nn.Module):
                 # cv2.imshow("LunarLander", env.render())
                 # cv2.waitKey(1)
                 if self.wandb_upload:
-                    wandb.log({"reward": reward,
-                               "action": action.cpu().numpy(),
-                            })
+                    wandb.log({"reward": reward})
+                    for a in range(self.action_shape):
+                        wandb.log({f"action_{a}": action[a].item()})
             if self.wandb_upload:
                 if renders:
                     renders = [

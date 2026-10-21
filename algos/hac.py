@@ -191,7 +191,7 @@ class HACAgent(nn.Module):
         
         self.GOAL_THRESHOLD = hyperparams.get("GOAL_THRESHOLD", 0.1)      # Threshold for considering the goal achieved
         self.NUM_UPDATES = hyperparams.get("NUM_UPDATES", 10)          # Number of DDPG updates per episode
-        self.ALPHA = hyperparams.get("ALPHA", 0.01)   # Weight for episode reward
+        self.ALPHA = hyperparams.get("ALPHA", 0)   # Weight for episode reward
         self.N_LEVELS = hyperparams.get("N_LEVELS", 2) # Number of levels in the hierarchy
         self.SUBGOAL_HORIZON = hyperparams.get("SUBGOAL_HORIZON", 10)    # Number of steps to achieve a subgoal
         self.SUBGOAL_TEST_FREQ = hyperparams.get("SUBGOAL_TEST_FREQ", 0.3)  # Frequency of testing subgoal achievement
@@ -310,7 +310,7 @@ class HACAgent(nn.Module):
     def train_level(self, env, level, state, info, goals=[], subgoal_test=False):
 
         hindsight_goal_transitions = []
-        goal = goals[-1] if goals else env.observation_space.sample()  # Use the last subgoal as the goal for this level, or sample a random goal if no subgoals are provided
+        goal = goals[-1] #if goals else env.observation_space.sample()  # Use the last subgoal as the goal for this level, or sample a random goal if no subgoals are provided
 
         for attempt in range(self.SUBGOAL_HORIZON):
 
@@ -319,18 +319,19 @@ class HACAgent(nn.Module):
 
             if level > 0:
                 action = self.select_level_action(level, state, goal, subgoal_test=subgoal_test)
-                next_state = self.train_level(env, level-1, state, info, goals + [action], subgoal_test=subgoal_test)
+                next_state, info = self.train_level(env, level-1, state, info, goals + [action], subgoal_test=subgoal_test)
             else:
                 self.previous_gstate = info.get('achieved_goal', state)  # Store the previous achieved goal 
                 action = self.select_level_action(0, state, goal, subgoal_test=subgoal_test)
                 next_state, reward, terminated, truncated, info = env.step(action)
-                self.done = terminated or truncated
                 self.episode_reward += reward * (1-self.done)
                 self.env_steps += 1 * (1-self.done)
                 self.episode_length += 1 * (1-self.done)
+                self.done = terminated or truncated
                 self.achieved_gstate = info.get('achieved_goal', next_state)  # Use the achieved goal from the info dictionary if available, otherwise use the next state
                 for l in range(self.N_LEVELS):
                     if self.compute_her_reward(self.previous_gstate, goals[-1-l], self.achieved_gstate)==0:  # Check if any subgoals was achieved
+                        # print(f"Subgoal at level {l} achieved. Previous gstate: {self.previous_gstate}, Goal: {goals[-1-l]}, Achieved gstate: {self.achieved_gstate}")
                         self.highest_subgoal_achieved_level = max(self.highest_subgoal_achieved_level, l)
 
                 if self.wandb_upload:
@@ -381,7 +382,7 @@ class HACAgent(nn.Module):
                 nxt_lvl_input = np.concatenate([next_state, goal])
                 self.replay_buffers[level].add(lvl_input, action, r_g, nxt_lvl_input, float(done), self.GAMMA)  
 
-        return next_state
+        return next_state, info
 
     def test_level(self, env, level, state, info, goals=[], subgoal_test=False):
 
@@ -391,18 +392,27 @@ class HACAgent(nn.Module):
 
             if level > 0:
                 action = self.select_level_action(level, state, goal, subgoal_test=subgoal_test)
-                next_state = self.test_level(env, level-1, state, info, goals + [action], subgoal_test=subgoal_test)
+                next_state, info = self.test_level(env, level-1, state, info, goals + [action], subgoal_test=subgoal_test)
             else:
                 self.previous_gstate = info.get('achieved_goal', state)  # Store the previous achieved goal
                 action = self.select_level_action(0, state, goal, subgoal_test=subgoal_test)
                 next_state, reward, terminated, truncated, info = env.step(action)
-                self.done = terminated or truncated
                 self.episode_reward += reward * (1-self.done)
                 self.episode_length += 1 * (1-self.done)
+                self.done = terminated or truncated
                 self.achieved_gstate = info.get('achieved_goal', next_state)  # Use the achieved goal from the info dictionary if available, otherwise use the next state
                 for l in range(self.N_LEVELS):
                     if self.compute_her_reward(self.previous_gstate, goals[-1-l], self.achieved_gstate)==0:  # Check if any subgoals was achieved
                         self.highest_subgoal_achieved_level = max(self.highest_subgoal_achieved_level, l)
+
+            if self.wandb_upload:
+                wandb.log({
+                    "highest_subgoal_achieved_level": self.highest_subgoal_achieved_level,
+                })
+                for a in range(self.action_dim):
+                    wandb.log({
+                        f"level_{level}_action_{a}": action[a],
+                    })
                 
 
             goal = self.goal_transition(self.previous_gstate, goal, self.achieved_gstate)  # Compute the new goal for the next step based on the achieved goal
@@ -411,7 +421,7 @@ class HACAgent(nn.Module):
             if self.done or self.highest_subgoal_achieved_level >= level:  
                 break
         
-        return next_state
+        return next_state, info
     
     def train_agent(self, env, store_episode_rewards=False):
 
@@ -496,16 +506,18 @@ class HACAgent(nn.Module):
                 self.episode_length = 0
                 self.done = False
                 while not self.done:
-                    desired_gstate = info.get('desired_goal', env.observation_space.sample())  # Use the desired goal from the info dictionary if available, otherwise sample a random goal
-                    achieved_gstate = info.get('achieved_goal', obs)  # Use the achieved goal from the info dictionary if available, otherwise use the current observation
-                    goal = desired_gstate - achieved_gstate  # Compute the goal as the difference between the desired goal and the current observation
                     self.highest_subgoal_achieved_level = -1  # Reset the highest subgoal achieved level for this episode
-                    next_obs = self.train_level(env, self.N_LEVELS-1, obs, info, [goal])  # Start training from the highest level
+                    self.desired_gstate = info.get('desired_goal', env.observation_space.sample())  # Use the desired goal from the info dictionary if available, otherwise sample a random goal
+                    self.achieved_gstate = info.get('achieved_goal', obs)  # Use the achieved goal from the info dictionary if available, otherwise use the current observation
+                    goal = self.desired_gstate - self.achieved_gstate  # Compute the goal as the difference between the desired goal and the current observation
+                    next_obs, info = self.train_level(env, self.N_LEVELS-1, obs, info, [goal])  # Start training from the highest level
                     obs = next_obs
 
+                    # print(f"Env Steps: {self.env_steps}, Episode Reward: {self.episode_reward}, Episode Length: {self.episode_length}, Highest Subgoal Achieved Level: {self.highest_subgoal_achieved_level}")
                     # Update the agent
-                    for level in range(self.N_LEVELS):
-                        self.levels[level].train(self.replay_buffers[level], max_action=self.MAX_ACTION)
+                    if self.env_steps > self.RANDOM_START_STEPS:
+                        for level in range(self.N_LEVELS):
+                            self.levels[level].train(self.replay_buffers[level], max_action=self.MAX_ACTION)
 
                 if self.wandb_upload:
                     wandb.log({
@@ -552,47 +564,54 @@ class HACAgent(nn.Module):
             print("Weights not found. Please train the agent first.")
             return
 
-        if self.wandb_upload:
-            run = wandb.init(
-                entity="arkapatra31-ust",
-                project="HAC-Test",
-                config={
-                    "env": env_name,
-                    "architecture": "HAC",
-                    "model_path": model_path,
-                    "seed": self.SEED,
-                    "action_dim": self.action_dim,
-                    "state_dim": self.state_dim
-                }
-            )
-            run.name = f"{env_name}_test_{n_episodes}_episodes"
-
         if record_stats:
             episode_rewards = []
             episode_lengths = []
 
         for episode in range(n_episodes):
 
+            if self.wandb_upload:
+                run = wandb.init(
+                    entity="arkapatra31-ust",
+                    project="HAC-Test",
+                    config={
+                        "env": env_name,
+                        "architecture": "HAC",
+                        "model_path": model_path,
+                        "seed": self.SEED,
+                        "action_dim": self.action_dim,
+                        "state_dim": self.state_dim
+                    }
+                )
+                run.name = f"{env_name}_test_{episode+1}"
+
             obs, info = env.reset(seed=self.SEED + episode)
             self.done = False
             self.episode_reward = 0
             self.episode_length = 0
             renders = []  # Store frames for video logging
-            
             while not self.done:
-                desired_gstate = info.get('desired_goal', env.observation_space.sample())  # Use the desired goal from the info dictionary if available, otherwise sample a random goal
-                achieved_gstate = info.get('achieved_goal', obs)  # Use the achieved goal from the info dictionary if available, otherwise use the current observation
-                goal = desired_gstate - achieved_gstate  # Compute the goal as the difference between the desired goal and the current observation
+                self.desired_gstate = info.get('desired_goal', env.observation_space.sample())  # Use the desired goal from the info dictionary if available, otherwise sample a random goal
+                self.achieved_gstate = info.get('achieved_goal', obs)  # Use the achieved goal from the info dictionary if available, otherwise use the current observation
+                goal = self.desired_gstate - self.achieved_gstate  # Compute the goal as the difference between the desired goal and the current observation
 
-                self.highest_subgoal_achieved_level = -1  # Reset the highest subgoal achieved level for this episode
-                next_obs = self.test_level(env, self.N_LEVELS-1, obs, info, [goal], subgoal_test=True)  # Start testing from the highest level
+                if self.wandb_upload:
+                    for g in range(self.goal_dim):
+                        wandb.log({
+                            f"goal_{g}": goal[g],
+                            f"achieved_goal_{g}": self.achieved_gstate[g],
+                            f"desired_goal_{g}": self.desired_gstate[g],
+                        })
+                self.highest_subgoal_achieved_level = -1  # Reset the highest subgoal achieved level
+                next_obs, info = self.test_level(env, self.N_LEVELS-1, obs, info, [goal], subgoal_test=True)  # Start testing from the highest level
                 obs = next_obs
+                if self.wandb_upload:
+                    wandb.log({
+                        "episode_reward": self.episode_reward,
+                    })
+                    renders.append(env.render())  # Capture the rendered frame
 
             if self.wandb_upload:
-                wandb.log({
-                    "episode_reward": self.episode_reward,
-                    "episode_length": self.episode_length,
-                })
                 if renders:
                     renders = [
                         cv2.resize(render, (500, 500), interpolation=cv2.INTER_AREA)
@@ -608,7 +627,6 @@ class HACAgent(nn.Module):
                 episode_lengths.append(self.episode_length)
             
             print(f"Episode {episode + 1}: Total Reward: {self.episode_reward}, Length: {self.episode_length}")
-        wandb.finish()
 
         if record_stats:
             return episode_rewards, episode_lengths

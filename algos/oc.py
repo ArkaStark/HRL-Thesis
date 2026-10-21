@@ -384,7 +384,7 @@ class OCAgent(nn.Module):
                         "action_dim": self.action_dim,
                     },
                 )
-                # run.name = f"{env_name}_{episode + 1}_nOpt_{self.NUM_OPTIONS}_LR_{self.LR:.6f}_TermReg_{self.TERM_REG:.3f}"
+                run.name = f"{env_name}_ep-{episode + 1}_nOpt_{self.NUM_OPTIONS}"
 
             state, _ = env.reset(seed=self.SEED + episode)  # Ensure reproducibility by varying the seed per episode
             state = torch.FloatTensor(state).unsqueeze(0).to(self.device)
@@ -409,15 +409,15 @@ class OCAgent(nn.Module):
                 episode_reward += reward
                 episode_len += 1
                 # Check for option termination
-                _, _, next_term_probs = self.forward(next_state)
+                q_vals, _, next_term_probs = self.forward(next_state)
                 term_prob_next = next_term_probs[0, current_option]
                 
                 if not done:
                     term_dist = Bernoulli(probs=term_prob_next.detach())
                     if term_dist.sample().item() == 1.0:
+                        print(f"Option {current_option} terminated at step {episode_len}, switching options.")
                         # Option terminated, pick a new one (greedy)
-                        q_vals_next, _, _ = self.forward(next_state)
-                        current_option = q_vals_next.argmax(dim=1).item()
+                        current_option = q_vals.argmax(dim=1).item()
 
                 state = next_state
 
@@ -436,8 +436,8 @@ class OCAgent(nn.Module):
                         "term_prob_next": term_prob_next.item(),
                         "episode_reward": episode_reward,
                         "action": action,
-                        "x_position": state[0][0],
-                        "y_position": state[0][1]
+                        "reward": reward,
+                        "option_value": q_vals[0, current_option].item(),
                     })
 
             if self.wandb_upload:
