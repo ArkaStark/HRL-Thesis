@@ -134,19 +134,19 @@ def main():
             # "WANDB_UPLOAD": True,
             # "SAVE_MODEL": True,
 
-            "LR": 0.00023275480397030168,                       # OC, FuN, A2C
-            # "LR_ACTOR": 1e-4,                 # DDPG, TD3, HIRO, HAC
-            # "LR_CRITIC": 1e-3,                # DDPG, TD3, HIRO, HAC
+            # "LR": 6e-4,                       # OC, FuN, A2C
+            # "LR_ACTOR": 0.001021589217665543,                 # DDPG, TD3, HIRO, HAC
+            # "LR_CRITIC": 0.009676741439909976,                # DDPG, TD3, HIRO, HAC
             # "GAMMA": 0.9856086048981776,                    # OC, DDPG
             # "GAMMA_M": 0.99,                  # FuN, HIRO
             # "GAMMA_W": 0.95,                  # FuN, HIRO
-            # "LAM": 0.977,
+            # "LAM": 0.9647539603130756,
             # "PPO_EPOCHS": 8,                    # PPO
 
-            "NUM_OPTIONS": 2,                 # OC
-            "TERM_REG": 0.05701939380921457,                 # OC
-            "EPSILON_DECAY": 0.997939454548163,           # OC
-            "ENT_COEF": 0.01086741436914558,                 # OC, A2C, PPO
+            # "NUM_OPTIONS": 4,                 # OC
+            # "TERM_REG": 0.05701939380921457,                 # OC
+            # "EPSILON_DECAY": 0.997939454548163,           # OC
+            # "ENT_COEF": 0.007626425978885584,                 # OC, A2C, PPO
             
             # "MAX_ACTION": 3.0,                # DDPG, TD3
             # "TAU": 0.0095,                      # DDPG, TD3 
@@ -154,24 +154,24 @@ def main():
             # 'UPDATE_DELAY': 1,                    # TD3
             
 
-            # "GOAL_DIM": 76,                  # FuN, HIRO
+            # "GOAL_DIM": 2,                  # FuN, HIRO
             # "N_GOALS": 1,                    # FuN
-            # "SUBGOAL_HORIZON": 2,            # FuN, HIRO, HAC
+            # "SUBGOAL_HORIZON": 10,            # FuN, HIRO, HAC
 
             # "MAX_EPISODES": 2000,               # OC, DDPG, TD3, HIRO, HAC
             # "N_UPDATES": 1000,                # FuN
 
-            # "ALPHA": 0.2,                     # FuN, HAC, HER, RAINBOW
-            # 'EXPL_NOISE_MANAGER': 0.0011991061952753303,          # HIRO, HAC
-            # 'EXPL_NOISE_WORKER': 0.00741985116880456,           # HIRO, HAC, TD3
-            # 'GOAL_BOUND': 1.8779283695598328,                  # HIRO, HAC
-            # 'GOAL_THRESHOLD': 0.6933242578871506,              # HAC
+            # "ALPHA": 0.7532654926423844,                     # FuN, HAC, HER, RAINBOW
+            # 'EXPL_NOISE_MANAGER': 1.994184625139012,          # HIRO, HAC
+            # 'EXPL_NOISE_WORKER': 1.3807217004016186,           # HIRO, HAC, TD3
+            # 'GOAL_BOUND': 1.174062547500722,                  # HIRO, HAC
+            # 'GOAL_THRESHOLD': 1e-3,              # HAC
             # 'N_LEVELS': 3,                      # HAC
-            "MAX_ENV_STEPS": 5e5,              # OC, DDPG, TD3, HIRO, HAC
-            # 'SUBGOAL_TEST_FREQ': 0.4,                  # HAC
-            # 'N_STEP': 10,                        # RAINBOW
-            # 'ATOM_SIZE': 4,                    # RAINBOW
-            # 'V_MAX': 100,                     # RAINBOW            
+            # "MAX_ENV_STEPS": 7e4,              # OC, DDPG, TD3, HIRO, HAC
+            # 'SUBGOAL_TEST_FREQ': 0.6,                  # HAC
+            # 'N_STEP': 5,                        # RAINBOW
+            # 'ATOM_SIZE': 8,                    # RAINBOW
+            # 'V_MAX': 300,                     # RAINBOW            
         }
 
         hyperparameters['SEED'] = args.seed
@@ -222,30 +222,19 @@ def main():
     if args.test_agent:
         print(f"Testing agent: {agent_name} on environment: {env.spec.id}")
 
-    # env = gym.make("CartPole-v1", max_episode_steps=500, render_mode="human")
-    # env = gym.make("CartPole-v1", max_episode_steps=500)
-    # env = gym.make("BipedalWalker-v3", max_episode_steps=600, render_mode="rgb_array")
-    # env = gym.make("MiniGrid-FourRooms-v0", render_mode="rgb_array", max_episode_steps=100)
-    # env = FullyObsWrapper(env)  # Use fully observable state instead of partial observations
-    # env = ImgObsWrapper(env)  # Use image observations instead of dictionary observations
-    # env.action_space = gym.spaces.Discrete(3)  # Update the action space to have 3 discrete actions
+        for dist in args.dist_levels:
+            env = gym.make(args.env, render_mode=args.render_mode, max_episode_steps=args.max_episode_steps)
+            if args.env_wrapper:
+                print(f"Applying environment wrapper !!")
+                env = env_wrapper(env)  # Wrap the environment if needed
 
-    # env = gym.make("ALE/Pong-v5", obs_type="grayscale")
-    # env = gym.wrappers.ResizeObservation(env, (84, 84))
-    # # env = gym.wrappers.ResizeObservation(env, (42, 42))
-    # env = gym.wrappers.ResizeObservation(env, (21, 21))
-    # env = gym.wrappers.NormalizeObservation(env)  # Normalize pixel values to [0, 1]
-    # env = gym.wrappers.FrameStackObservation(env, 4)  # Stack 4 frames to capture motion information
-
-    # dataset_name = 'antmaze-medium-navigate-v0'  
-    # env = ogbench.make_env_and_datasets(dataset_name, env_only=True)
-
-    # env = env_wrapper(env)  # Wrap the environment if needed
-
-    # model_path = "Weights/AntMaze_UMazeDense-v5-GC_HIRO_weights/HIRO_AntMaze_UMazeDense-v5-GC_C_10_gb_0.8_xx"
-    # model_path = "Weights/CartPole-v1_A2C_weights/1000_alr0.0005_clr_0.0045_ent0.0007-a"
-        model_path = args.model_path
-        agent.test_agent(env=env, n_episodes=5, model_path=model_path)
+            dist_type = args.dist_type.split('-')[1]
+            dist_space = args.dist_type.split('-')[0]
+            if dist_type == 'delay':
+                env = delay_injection(env, delay_steps=int(dist), delay_type=dist_space)  # Inject a delay in the environment obs/act
+            elif dist_type == 'noise':
+                env = noise_injection(env, noise_std=float(dist), noise_type=dist_space)  # Inject Gaussian noise into the environment obs/act
+            agent.test_agent(env=env, n_episodes=2, model_path=args.model_path)
 
 
     # CREATE TEST ENVIRONMENT FOR EVALUATION
@@ -254,13 +243,20 @@ def main():
         print(f"Testing agent: {agent_name} on environment: {env.spec.id} for statistics collection")
 
         # delays = [1, 2, 4, 8, 16, 32]  # List of delay steps to test
-        noises = [0.01, 0.05, 0.1, 0.2, 0.5]  # List of noise standard deviations to test
-        for noise in noises:
-        # for delay in delays:
-            # env = gym.make("InvertedPendulum-v5", max_episode_steps=500, render_mode="rgb_array")
+        # noises = [0.01, 0.05, 0.1, 0.2, 0.5]  # List of noise standard deviations to test
+        for dist in args.dist_levels:
             env = gym.make(args.env, render_mode=args.render_mode, max_episode_steps=args.max_episode_steps)
-            # env = delay_injection(env, delay_steps=delay, delay_type='act')  # Inject a delay in the environment obs/act
-            env = noise_injection(env, noise_std=noise, noise_type='obs')  # Inject Gaussian noise into the environment obs/act
+
+            if args.env_wrapper:
+                print(f"Applying environment wrapper !!")
+                env = env_wrapper(env)  # Wrap the environment if needed
+            
+            dist_type = args.dist_type.split('-')[1]
+            dist_space = args.dist_type.split('-')[0]
+            if dist_type == 'delay':
+                env = delay_injection(env, delay_steps=int(dist), delay_type=dist_space)  # Inject a delay in the environment obs/act
+            elif dist_type == 'noise':
+                env = noise_injection(env, noise_std=float(dist), noise_type=dist_space)  # Inject Gaussian noise into the environment obs/act
 
             # run = wandb.init(
             #     entity = "arkapatra31-ust",
@@ -340,14 +336,14 @@ def main():
             plt.ylabel('Frequency')
 
             plt.tight_layout()
-            os.makedirs(f'stats/XP_stats_figs_{n_episodes}/{agent.__class__.__name__}', exist_ok=True)  # Create the directory if it doesn't exist
-            plt.savefig(f'stats/XP_stats_figs_{n_episodes}/{agent.__class__.__name__}/{env.spec.id}_{agent.__class__.__name__}.png')  # Save the figure
+            os.makedirs(f'stats/IP_stats_figs_{n_episodes}/{agent.__class__.__name__}', exist_ok=True)  # Create the directory if it doesn't exist
+            plt.savefig(f'stats/IP_stats_figs_{n_episodes}/{agent.__class__.__name__}/{env.spec.id}_{agent.__class__.__name__}.png')  # Save the figure
             # plt.show()  # Show the figure
 
             write_stats = True  # Set to True if you want to write stats to a file
             if write_stats:
                 # Append mode: adds to end of existing file
-                with open(f"stats/XP_stats_figs_{n_episodes}/{args.agent.upper()}-LL-stats-{n_episodes}.txt", "a", encoding="utf-8") as file:
+                with open(f"stats/IP_stats_figs_{n_episodes}/{args.agent.upper()}-LL-stats-{n_episodes}.txt", "a", encoding="utf-8") as file:
                     file.write(f"Environment: {env.spec.id}\tAgent: {agent.__class__.__name__}\tn_episodes: {n_episodes}\n")
                     file.write(f"Model Path: {model_path}\n")
                     file.write("-" * 80 + "\n")  # Separator line for clarity
@@ -404,23 +400,28 @@ def visualize_values(agent, env, model, axis1=0, axis2=1, num_points=20, avg_ove
 
 def env_wrapper(env):
     # Wrap the environment with any necessary wrappers
+    # env = FullyObsWrapper(env)  # Use fully observable state instead of partial observations
+    # env = ImgObsWrapper(env)  # Use image observations instead of dictionary observations
+    # env = gym.wrappers.ResizeObservation(env, (21, 21))
+    # env = gym.wrappers.NormalizeObservation(env)  # Normalize pixel values to [0, 1]
+    # env = gym.wrappers.FrameStackObservation(env, 4)  # Stack 4 frames to capture motion information
     original_step = env.step
     original_reset = env.reset
 
-    def preprocess_obs(obs):
-        # obs = obs['image']  # Extract the image observation
+    def preprocess_obs(observation):
+        # obs = observation  # Use the observation as is
+        # obs = observation['image']  # Extract the image observation
         # obs = obs.transpose(2, 0, 1)  # Convert to channel-first format (C, H, W)
-        # obs = obs / 255.0  # Normalize pixel values to [0, 1]
+        # observation = obs / 255.0  # Normalize pixel values to [0, 1]
         # obs = obs.sum(axis=0)/3  # Convert the image to a single channel (grayscale)
-        observation = obs['observation']  # Extract the observation from the dictionary
-        desired_goal = obs['desired_goal']  # Extract the desired goal from the dictionary
-        achieved_goal = obs['achieved_goal']  # Extract the achieved goal from the dictionary
-        # observation = np.concatenate([achieved_goal,observation])  # Concatenate the observation and desired goal
+        obs = observation['observation']  # Extract the observation from the dictionary
+        desired_goal = observation['desired_goal']  # Extract the desired goal from the dictionary
+        achieved_goal = observation['achieved_goal']  # Extract the achieved goal from the dictionary
+        # obs = np.concatenate([achieved_goal,obs])  # Concatenate the observation and desired goal
         # obs = obs[:29]
-        # observation = obs  # Use the original observation without modification
-        # observation = np.concatenate([observation, np.zeros(observation.shape)])
-        return observation, desired_goal, achieved_goal
-        # return observation, None, None  # Return None for desired_goal and achieved_goal since they are not used
+        # obs = np.concatenate([obs, np.zeros(obs.shape)])
+        return obs, desired_goal, achieved_goal
+        # return obs, None, None  # Return None for desired_goal and achieved_goal since they are not used
 
     def step(self, action):
         obs, reward, terminated, truncated, info = original_step(action)
@@ -442,8 +443,9 @@ def env_wrapper(env):
     # env.observation_space = env.observation_space['observation']  # Update the observation space to match the new observation format
     # env.observation_space = gym.spaces.Box(low=0.0, high=1.0, shape=(3, 21, 21), dtype=np.float32)  # Update the observation space to match the new observation format
     # env.action_space = gym.spaces.Box(-1.0, 1.0, (4,))  # Update the action space 
+    # env.action_space = gym.spaces.Discrete(3)  # Update the action space to have 3 discrete actions
     env.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=env.reset()[0].shape, dtype=np.float32)  # Update the observation space to match the new observation format
-    env.spec.id = env.spec.id + "-GC"  # Update the environment ID to indicate that it has been wrapped
+    env.spec.id = env.spec.id + "-wrapped"  # Update the environment ID to indicate that it has been wrapped
 
     return env
 
@@ -741,7 +743,8 @@ def hyperparameter_tuning(env, args, state_dim, action_dim, hyp_sweep, device="c
             print(f"Starting a new sweep run with hyperparameter config:\n {config}")
 
             hyperparams = {
-                'MAX_ENV_STEPS': 1e6,
+                'MAX_ENV_STEPS': 1e5, #args.max_env_steps,
+                'GOAL_DIM': 2,
                 'WANDB_UPLOAD': True,
             }
             for key in config.keys():
@@ -788,7 +791,7 @@ def parse_args():
     parser.add_argument("--percept", action="store_true", help="Use perceptual module in the agent")
     
 
-    parser.add_argument("--max_env_steps", type=int, help="Maximum number of steps per episode for the environment")
+    parser.add_argument("--max_env_steps", type=int, default=1e5, help="Maximum number of steps per episode for the environment")
     parser.add_argument("--train_agent", action="store_true", help="Train the agent")
     parser.add_argument("--hyperparams_json", type=str, default=None, help="Path to a JSON file containing hyperparameters for training")
     parser.add_argument("--hyperparams_yaml", type=str, default=None, help="Path to a YAML file containing hyperparameters for training")
@@ -797,12 +800,11 @@ def parse_args():
     parser.add_argument("--test_agent_stats", action="store_true", help="Test the agent and record statistics")  
     parser.add_argument("--model_path", type=str, default=None, help="Path to the trained model for testing")
     parser.add_argument("--test_episodes", type=int, default=1000, help="Number of episodes for testing")
-    parser.add_argument("--dist_levels", type=list, default=[0], help="Disturbance levels to inject into the environment")
+    parser.add_argument("--dist_levels", type=json.loads, default="[0]", help="Disturbance levels to inject into the environment")
     parser.add_argument("--dist_type", type=str, default="obs-delay", choices=["obs-delay", "act-delay", "obs-noise", "act-noise"], help="Type of disturbance to inject into the environment")
     # parser.add_argument("--record_stats", action="store_true", help="Record statistics during testing")
     parser.add_argument("--save_stats_figs", action="store_true", help="Save statistics figures during testing")
     parser.add_argument("--write_stats", action="store_true", help="Write statistics to a file during testing")
-
     parser.add_argument("--hyperparameter_tuning", action="store_true", help="Perform hyperparameter tuning")
     parser.add_argument("--sweep_count", type=int, default=20, help="Number of hyperparameter sweep runs")
     parser.add_argument("--hyperparams_sweep_json", type=str, default=None, help="Path to a JSON file containing hyperparameters sweep dictionary for hyperparameter tuning")
